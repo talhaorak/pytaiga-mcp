@@ -7,7 +7,7 @@ name = "mcp-taiga-bridge"
 version = "0.1.0"
 description = "Taiga integration bridge for MCP"
 requires-python = ">=3.10"
-authors = [{ name = "Taiga MCP Bridge Team" }]
+authors = [{ name = "Talha Orak", email = "talhaorak@users.noreply.github.com" }]
 dependencies = [
     "mcp[cli]>=0.1.0",
     "fastapi>=0.104.0",
