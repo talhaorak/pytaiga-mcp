@@ -8,7 +8,7 @@ from mcp.server.fastmcp import FastMCP
 from taiga.exceptions import TaigaException
 
 # Assuming taiga_client.py is in the same directory or accessible via PYTHONPATH
-from taiga_client import TaigaClientWrapper
+from src.taiga_client import TaigaClientWrapper
 
 # --- Logging Setup ---
 logging.basicConfig(

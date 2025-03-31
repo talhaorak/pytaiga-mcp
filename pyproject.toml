@@ -18,6 +18,7 @@ dependencies = [
     "pydantic>=2.4.0",
     "pydantic-settings>=2.0.0",
     "tenacity>=8.2.0",
+    "pytest>=8.3.5",
 ]
 
 [project.optional-dependencies]
