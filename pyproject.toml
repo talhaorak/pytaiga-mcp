@@ -16,6 +16,7 @@ dependencies = [
     "python-dotenv>=0.15.0",
     "httpx>=0.25.0",
     "pydantic>=2.4.0",
+    "pydantic-settings>=2.0.0",
     "tenacity>=8.2.0",
 ]
 
