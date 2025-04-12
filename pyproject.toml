@@ -12,13 +12,13 @@ dependencies = [
     "mcp[cli]>=0.1.0",
     "fastapi>=0.104.0",
     "uvicorn[standard]>=0.23.0",
-    "python-taiga>=0.9.0",
     "python-dotenv>=0.15.0",
     "httpx>=0.25.0",
     "pydantic>=2.4.0",
     "pydantic-settings>=2.0.0",
     "tenacity>=8.2.0",
     "pytest>=8.3.5",
+    "pytaigaclient",
 ]
 
 [project.optional-dependencies]
@@ -67,3 +67,6 @@ markers = [
     "sprints: Sprint-related tests",
 ]
 addopts = "-v"
+
+[tool.uv.sources]
+pytaigaclient = { git = "https://github.com/talhaorak/pyTaigaClient.git" }
