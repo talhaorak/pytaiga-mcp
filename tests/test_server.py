@@ -48,14 +48,8 @@ class TestTaigaTools:
         """Test list_projects functionality"""
         session_id, mock_client = session_setup
         
-        # Setup mock project
-        mock_project = MagicMock()
-        mock_project.id = 123
-        mock_project.name = "Test Project"
-        mock_project.to_dict.return_value = {"id": 123, "name": "Test Project"}
-        
-        # Setup list projects return
-        mock_client.api.projects.list.return_value = [mock_project]
+        # Setup list projects return - return actual dictionaries
+        mock_client.api.projects.list.return_value = [{"id": 123, "name": "Test Project"}]
         
         # List projects and verify
         projects = src.server.list_projects(session_id)
@@ -90,14 +84,8 @@ class TestTaigaTools:
         """Test list_user_stories functionality"""
         session_id, mock_client = session_setup
         
-        # Setup mock user story
-        mock_story = MagicMock()
-        mock_story.id = 456
-        mock_story.subject = "Test User Story"
-        mock_story.to_dict.return_value = {"id": 456, "subject": "Test User Story"}
-        
-        # Setup list user stories return
-        mock_client.api.user_stories.list.return_value = [mock_story]
+        # Setup list user stories return - return actual dictionaries
+        mock_client.api.user_stories.list.return_value = [{"id": 456, "subject": "Test User Story"}]
         
         # List user stories and verify
         stories = src.server.list_user_stories(session_id, 123)
@@ -112,14 +100,8 @@ class TestTaigaTools:
         """Test create_user_story functionality"""
         session_id, mock_client = session_setup
         
-        # Setup mock user story
-        mock_story = MagicMock()
-        mock_story.id = 456
-        mock_story.subject = "New Story"
-        mock_story.to_dict.return_value = {"id": 456, "subject": "New Story"}
-        
-        # Setup create user story return
-        mock_client.api.user_stories.create.return_value = mock_story
+        # Setup create user story return - return actual dictionary
+        mock_client.api.user_stories.create.return_value = {"id": 456, "subject": "New Story"}
         
         # Create user story and verify
         story = src.server.create_user_story(session_id, 123, "New Story", description="Test description")
@@ -127,20 +109,14 @@ class TestTaigaTools:
         assert story["id"] == 456
         
         # Verify the create was called with correct parameters
-        mock_client.api.user_stories.create.assert_called_once_with(123, "New Story", description="Test description")
+        mock_client.api.user_stories.create.assert_called_once_with(project=123, subject="New Story", description="Test description")
     
     def test_list_tasks(self, session_setup):
         """Test list_tasks functionality"""
         session_id, mock_client = session_setup
         
-        # Setup mock task
-        mock_task = MagicMock()
-        mock_task.id = 789
-        mock_task.subject = "Test Task"
-        mock_task.to_dict.return_value = {"id": 789, "subject": "Test Task"}
-        
-        # Setup list tasks return
-        mock_client.api.tasks.list.return_value = [mock_task]
+        # Setup list tasks return - return actual dictionaries
+        mock_client.api.tasks.list.return_value = [{"id": 789, "subject": "Test Task"}]
         
         # List tasks and verify
         tasks = src.server.list_tasks(session_id, 123)
