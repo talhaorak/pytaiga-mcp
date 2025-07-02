@@ -278,8 +278,8 @@ def list_user_stories(session_id: str, project_id: int, **filters) -> List[Dict[
         f"Executing list_user_stories for project {project_id}, session {session_id[:8]}, filters: {filters}")
     taiga_client_wrapper = _get_authenticated_client(session_id) # Use wrapper variable name
     try:
-        # Use pytaigaclient syntax: client.resource.list(project_id=..., **filters)
-        stories = taiga_client_wrapper.api.user_stories.list(project_id=project_id, **filters)
+        # Use pytaigaclient syntax: client.resource.list(project=..., **filters)
+        stories = taiga_client_wrapper.api.user_stories.list(project=project_id, **filters)
         # return [s.to_dict() for s in stories] # Remove .to_dict()
         return stories # Return directly
     except TaigaException as e:
@@ -452,8 +452,8 @@ def list_tasks(session_id: str, project_id: int, **filters) -> List[Dict[str, An
         f"Executing list_tasks for project {project_id}, session {session_id[:8]}, filters: {filters}")
     taiga_client_wrapper = _get_authenticated_client(session_id) # Use wrapper variable name
     try:
-        # Use pytaigaclient syntax: client.resource.list(project_id=..., **filters)
-        tasks = taiga_client_wrapper.api.tasks.list(project_id=project_id, **filters)
+        # Use pytaigaclient syntax: client.resource.list(project=..., **filters)
+        tasks = taiga_client_wrapper.api.tasks.list(project=project_id, **filters)
         # return [t.to_dict() for t in tasks] # Remove .to_dict()
         return tasks # Return directly
     except TaigaException as e:
