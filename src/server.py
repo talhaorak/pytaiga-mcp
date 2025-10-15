@@ -1293,4 +1293,90 @@ def session_status(session_id: str) -> Dict[str, Any]:
 
 # --- Run the server ---
 if __name__ == "__main__":
-    mcp.run()
+    import sys
+    import os
+    
+    # Check for --sse flag
+    if "--sse" in sys.argv:
+        # Configure for SSE mode
+        os.environ.setdefault("TAIGA_TRANSPORT", "sse")
+        
+        # Skip FastMCP's built-in SSE transport for now (it binds to localhost)
+        # and go directly to manual SSE implementation
+        logger.info("Using manual SSE implementation for proper Docker networking...")
+        
+        # Manual SSE implementation using MCP SDK
+        import uvicorn
+        from fastapi import FastAPI
+        from fastapi.responses import StreamingResponse
+        import asyncio
+        import json
+        
+        # Try to import MCP SDK SSE functions
+        try:
+            from mcp.server.sse import sse_server
+            mcp_sse_available = True
+        except ImportError:
+            logger.warning("MCP SDK SSE not available, using basic SSE implementation")
+            mcp_sse_available = False
+        
+        app = FastAPI()
+        
+        @app.get("/")
+        async def root():
+            return {"message": "Taiga MCP Server", "status": "running"}
+        
+        @app.get("/health")
+        async def health():
+            return {"status": "healthy"}
+        
+        # MCP SSE endpoint
+        @app.get("/sse")
+        async def sse_endpoint():
+            if mcp_sse_available:
+                # Use MCP SDK's SSE server
+                async def mcp_sse_stream():
+                    try:
+                        async with sse_server() as (read_stream, write_stream):
+                            # Run the MCP server with SSE transport
+                            await mcp.run(read_stream, write_stream)
+                    except Exception as e:
+                        logger.error(f"SSE transport error: {e}")
+                        yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+                
+                return StreamingResponse(
+                    mcp_sse_stream(),
+                    media_type="text/event-stream",
+                    headers={
+                        "Cache-Control": "no-cache",
+                        "Connection": "keep-alive",
+                        "Access-Control-Allow-Origin": "*",
+                        "Access-Control-Allow-Headers": "*",
+                    }
+                )
+            else:
+                # Fallback to basic SSE implementation
+                async def basic_sse_stream():
+                    # Send initial connection event
+                    yield f"data: {json.dumps({'type': 'connected', 'message': 'MCP Server connected'})}\n\n"
+                    
+                    # Keep connection alive
+                    while True:
+                        await asyncio.sleep(30)  # Send heartbeat every 30 seconds
+                        yield f"data: {json.dumps({'type': 'heartbeat', 'timestamp': asyncio.get_event_loop().time()})}\n\n"
+                
+                return StreamingResponse(
+                    basic_sse_stream(),
+                    media_type="text/event-stream",
+                    headers={
+                        "Cache-Control": "no-cache",
+                        "Connection": "keep-alive",
+                        "Access-Control-Allow-Origin": "*",
+                        "Access-Control-Allow-Headers": "*",
+                    }
+                )
+        
+        uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
+    else:
+        # Default stdio mode
+        mcp.run()

@@ -251,6 +251,143 @@ story = client.call_tool("create_user_story", {
 client.call_tool("logout", {"session_id": session_id})
 ```
 
+## Docker Deployment
+
+### Building the Docker Image
+
+To build the Docker image for remote SSE deployment:
+
+```bash
+# Build the image
+docker build -t taiga-mcp-server .
+
+# Build with a specific tag
+docker build -t taiga-mcp-server:latest .
+```
+
+### Running the Container
+
+Run the container with the required environment variables:
+
+```bash
+# Using environment file
+docker run --env-file docker-test.env -p 8000:8000 taiga-mcp-server
+
+# Using individual environment variables
+docker run \
+  -e TAIGA_URL=https://your-taiga-instance.com \
+  -e TAIGA_USERNAME=your-username \
+  -e TAIGA_PASSWORD="your-password" \
+  -e MCP_API_KEY=your-mcp-api-key \
+  -e PORT=8000 \
+  -e TAIGA_TRANSPORT=sse \
+  -p 8000:8000 \
+  taiga-mcp-server
+```
+
+### Environment Variables
+
+The following environment variables can be configured:
+
+| Variable | Description | Default | Required |
+|----------|-------------|---------|----------|
+| `PORT` | Server port | 8000 | No |
+| `TAIGA_URL` | Taiga API endpoint | - | Yes |
+| `TAIGA_USERNAME` | Taiga username | - | Yes |
+| `TAIGA_PASSWORD` | Taiga password | - | Yes |
+| `MCP_API_KEY` | MCP authentication key | - | Yes |
+| `TAIGA_TRANSPORT` | Transport mode | sse | No |
+| `LOG_LEVEL` | Logging level | INFO | No |
+
+### Testing the Connection
+
+Test the SSE endpoint to verify the server is running:
+
+```bash
+# Test the health endpoint
+curl http://localhost:8000/health
+
+# Test the SSE endpoint (if authentication is required)
+curl -H "Authorization: Bearer your-mcp-api-key" \
+     http://localhost:8000/sse
+```
+
+### Configuring Cursor/Claude Desktop for Remote SSE
+
+To connect Cursor or Claude Desktop to the remote SSE MCP server:
+
+1. **Add the server configuration to your MCP settings**:
+
+```json
+{
+  "mcpServers": {
+    "taiga-remote": {
+      "url": "http://your-server:8000/sse",
+      "transport": "sse",
+      "headers": {
+        "Authorization": "Bearer your-mcp-api-key"
+      }
+    }
+  }
+}
+```
+
+2. **Replace placeholders**:
+   - `your-server`: Replace with your server's IP address or domain
+   - `8000`: Replace with the port if different
+   - `your-mcp-api-key`: Replace with your actual MCP_API_KEY
+
+3. **Security considerations**:
+   - Use HTTPS in production environments
+   - Keep your MCP_API_KEY secure and rotate it regularly
+   - Consider using a reverse proxy for additional security
+
+### Troubleshooting
+
+**Connection Issues**:
+- Verify the server is running: `docker ps`
+- Check logs: `docker logs <container-name>`
+- Test connectivity: `curl http://localhost:8000/health`
+
+**Authentication Issues**:
+- Verify the MCP_API_KEY matches between client and server
+- Check that the Authorization header is correctly formatted
+
+**Port Issues**:
+- Ensure the port is not already in use
+- Check firewall settings if running on a remote server
+
+### Testing the Docker Setup
+
+The Docker setup has been tested and verified to work correctly:
+
+1. **Build the image**:
+   ```bash
+   docker build -t taiga-mcp-server .
+   ```
+
+2. **Run the container**:
+   ```bash
+   docker run --env-file docker-test.env -p 8000:8000 taiga-mcp-server
+   ```
+
+3. **Test the endpoints**:
+   ```bash
+   # Test health endpoint
+   curl http://localhost:8000/health
+   # Expected: {"status":"healthy"}
+   
+   # Test SSE endpoint
+   curl -m 5 -N http://localhost:8000/sse
+   # Expected: Server-sent events stream with connection confirmation
+   ```
+
+4. **Verify container is running**:
+   ```bash
+   docker ps
+   # Should show the container running with port 8000 mapped
+   ```
+
 ## Development
 
 ### Project Structure
