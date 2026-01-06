@@ -83,20 +83,18 @@ The bridge can be configured through environment variables or a `.env` file:
 | Environment Variable | Description | Default |
 | --- | --- | --- |
 | `TAIGA_API_URL` | Base URL for the Taiga API | http://localhost:9000 |
-| `SESSION_EXPIRY` | Session expiration time in seconds | 28800 (8 hours) |
+| `TAIGA_USERNAME` | Taiga username for auto-authentication | (none) |
+| `TAIGA_PASSWORD` | Taiga password for auto-authentication | (none) |
 | `TAIGA_TRANSPORT` | Transport mode (stdio or sse) | stdio |
-| `REQUEST_TIMEOUT` | API request timeout in seconds | 30 |
-| `MAX_CONNECTIONS` | Maximum number of HTTP connections | 10 |
-| `MAX_KEEPALIVE_CONNECTIONS` | Max keepalive connections | 5 |
-| `RATE_LIMIT_REQUESTS` | Max requests per minute | 100 |
 | `LOG_LEVEL` | Logging level | INFO |
-| `LOG_FILE` | Path to log file | taiga_mcp.log |
 
 Create a `.env` file in the project root to set these values:
 
 ```
 TAIGA_API_URL=https://api.taiga.io/api/v1/
-TAIGA_TRANSPORT=sse
+TAIGA_USERNAME=your_username
+TAIGA_PASSWORD=your_password
+TAIGA_TRANSPORT=stdio
 LOG_LEVEL=DEBUG
 ```
 
@@ -259,13 +257,11 @@ client.call_tool("logout", {"session_id": session_id})
 pyTaigaMCP/
 ├── src/
 │   ├── server.py          # MCP server implementation with tools
-│   ├── taiga_client.py    # Taiga API client with all CRUD operations
-│   ├── tools.py           # MCP tools definitions
+│   ├── taiga_client.py    # Taiga API client wrapper
 │   └── config.py          # Configuration settings with Pydantic
 ├── tests/
-│   ├── conftest.py        # Shared pytest fixtures
-│   ├── unit/              # Unit tests
-│   └── integration/       # Integration tests
+│   ├── test_server.py     # Unit tests
+│   └── test_integration.py # Integration tests
 ├── pyproject.toml         # Project configuration and dependencies
 ├── install.sh             # Installation script
 ├── run.sh                 # Server execution script
@@ -280,17 +276,7 @@ Run tests with pytest:
 # Run all tests
 pytest
 
-# Run only unit tests
-pytest tests/unit/
-
-# Run only integration tests
-pytest tests/integration/
-
-# Run tests with specific markers
-pytest -m "auth"  # Authentication tests
-pytest -m "core"  # Core functionality tests
-
-# Run tests with coverage reporting
+# Run with coverage reporting
 pytest --cov=src
 ```
 
@@ -321,14 +307,14 @@ All API operations return standardized error responses in the following format:
 }
 ```
 
-## Performance Considerations
+## Planned Features
 
-The bridge implements several performance optimizations:
+The following features are planned for future releases:
 
-1. **Connection Pooling**: Reuses HTTP connections for better performance
-2. **Rate Limiting**: Prevents overloading the Taiga API
-3. **Retry Mechanism**: Automatically retries failed requests with exponential backoff
-4. **Session Cleanup**: Regularly cleans up expired sessions to free resources
+- Session expiration and automatic cleanup
+- Rate limiting for API calls
+- Retry mechanism with exponential backoff
+- Connection pooling
 
 ## Contributing
 
