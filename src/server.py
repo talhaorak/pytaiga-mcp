@@ -1,14 +1,17 @@
-# server_fastmcp.py
+# server.py
+import json
 import logging
 import logging.config
 import uuid
-from typing import Optional, List, Dict, Any
+from contextlib import asynccontextmanager
+from typing import Optional, List, Dict, Any, AsyncIterator
 
 from mcp.server.fastmcp import FastMCP
 from pytaigaclient.exceptions import TaigaException
 
 # Assuming taiga_client.py is in the same directory or accessible via PYTHONPATH
 from src.taiga_client import TaigaClientWrapper
+from src.config import settings, mask_credential
 
 # --- Logging Setup ---
 logging.basicConfig(
@@ -22,18 +25,99 @@ logger = logging.getLogger(__name__)
 # Quiet down pytaigaclient library logging if needed
 logging.getLogger("pytaigaclient").setLevel(logging.WARNING)
 
+# --- Helper Functions ---
+
+def _parse_mcp_kwargs(kwargs: dict) -> dict:
+    """Parse MCP kwargs which may be passed as a JSON string.
+
+    When FastMCP receives **kwargs in a tool function, it may pass
+    additional parameters as a JSON string under the 'kwargs' key.
+    This function handles that case and returns a proper dict.
+    """
+    if not kwargs:
+        return {}
+    # If kwargs contains a single 'kwargs' key with a string value, parse it
+    if len(kwargs) == 1 and 'kwargs' in kwargs:
+        kwargs_val = kwargs['kwargs']
+        if isinstance(kwargs_val, str):
+            return json.loads(kwargs_val) if kwargs_val else {}
+        return kwargs_val if isinstance(kwargs_val, dict) else {}
+    return kwargs
+
+
 # --- Manual Session Management ---
 # Store active sessions: session_id -> TaigaClientWrapper instance
 active_sessions: Dict[str, TaigaClientWrapper] = {}
 
+# Reserved session ID for auto-authenticated session from environment variables
+DEFAULT_SESSION_ID = "default"
+
+
+# --- Lifespan for Auto-Authentication ---
+@asynccontextmanager
+async def server_lifespan(server: FastMCP) -> AsyncIterator[None]:
+    """
+    Manage server startup and shutdown lifecycle.
+    Performs auto-authentication if credentials are in environment.
+    """
+    if settings.has_credentials:
+        logger.info("Environment credentials detected. Attempting auto-authentication...")
+        try:
+            wrapper = TaigaClientWrapper(host=settings.host)
+            success = wrapper.login(
+                username=settings.get_username_value(),
+                password=settings.get_password_value()
+            )
+            if success:
+                active_sessions[DEFAULT_SESSION_ID] = wrapper
+                logger.info(f"Auto-authentication successful. Default session created: '{DEFAULT_SESSION_ID}'")
+            else:
+                logger.warning("Auto-authentication failed. Manual login required.")
+        except Exception as e:
+            logger.error(f"Auto-authentication error: {e}")
+            logger.warning("Continuing without auto-authentication. Manual login required.")
+    else:
+        logger.info("No environment credentials found. Manual login required via login() tool.")
+
+    try:
+        yield
+    finally:
+        # Cleanup on shutdown
+        logger.info("Server shutting down. Cleaning up sessions...")
+        active_sessions.clear()
+
+
 # --- MCP Server Definition ---
-# No lifespan needed for this approach
 mcp = FastMCP(
-    "Taiga Bridge (Session ID)",
-    dependencies=["pytaigaclient"]
+    "Taiga Bridge",
+    dependencies=["pytaigaclient"],
+    lifespan=server_lifespan
 )
 
-# --- Helper Function for Session Validation ---
+# --- Helper Functions for Session Validation ---
+
+
+def _get_session_id(session_id: Optional[str] = None) -> str:
+    """
+    Get session ID, defaulting to 'default' if available.
+
+    Args:
+        session_id: Optional explicit session ID
+
+    Returns:
+        The session ID to use
+
+    Raises:
+        ValueError: If no session_id provided and no default session available
+    """
+    if session_id:
+        return session_id
+    if DEFAULT_SESSION_ID in active_sessions:
+        return DEFAULT_SESSION_ID
+    raise ValueError(
+        "No session_id provided and no default session available. "
+        "Set TAIGA_USERNAME/TAIGA_PASSWORD environment variables or use login() tool."
+    )
 
 
 def _get_authenticated_client(session_id: str) -> TaigaClientWrapper:
@@ -44,82 +128,110 @@ def _get_authenticated_client(session_id: str) -> TaigaClientWrapper:
     client = active_sessions.get(session_id)
     # Also check if the client object itself exists and is authenticated
     if not client or not client.is_authenticated:
-        logger.warning(f"Invalid or expired session ID provided: {session_id}")
+        logger.warning(f"Invalid or expired session ID provided: {session_id[:8] if session_id else 'None'}...")
         # Raise PermissionError - FastMCP will map this to an appropriate error response
         raise PermissionError(
-            f"Invalid or expired session ID: '{session_id}'. Please login again.")
-    logger.debug(f"Retrieved valid client for session ID: {session_id}")
+            f"Invalid or expired session ID. Please login again.")
+    logger.debug(f"Retrieved valid client for session ID: {session_id[:8]}...")
     return client
 
 # --- MCP Tools ---
 
 
-@mcp.tool("login", description="Logs into a Taiga instance using username/password and returns a session_id for subsequent authenticated calls.")
-def login(host: str, username: str, password: str) -> Dict[str, str]:
+@mcp.tool("get_default_session", description="Returns the default session ID if auto-authentication from environment variables was successful.")
+def get_default_session() -> Dict[str, Any]:
+    """
+    Returns the default session ID if environment-based authentication was successful.
+
+    Returns:
+        Dictionary with session_id if available, or error status.
+    """
+    if DEFAULT_SESSION_ID in active_sessions:
+        client = active_sessions[DEFAULT_SESSION_ID]
+        if client and client.is_authenticated:
+            return {
+                "session_id": DEFAULT_SESSION_ID,
+                "status": "active",
+                "auto_authenticated": True
+            }
+    return {
+        "status": "unavailable",
+        "message": "No default session. Set TAIGA_USERNAME/TAIGA_PASSWORD environment variables or use login() tool."
+    }
+
+
+@mcp.tool("login", description="Logs into a Taiga instance. Uses environment variables as defaults if parameters not provided.")
+def login(
+    host: Optional[str] = None,
+    username: Optional[str] = None,
+    password: Optional[str] = None
+) -> Dict[str, str]:
     """
     Handles Taiga login and creates a session.
 
     Args:
-        host: The URL of the Taiga instance (e.g., 'https://tree.taiga.io').
-        username: The Taiga username.
-        password: The Taiga password.
+        host: The URL of the Taiga instance. Defaults to TAIGA_API_URL env var.
+        username: The Taiga username. Defaults to TAIGA_USERNAME env var.
+        password: The Taiga password. Defaults to TAIGA_PASSWORD env var.
 
     Returns:
         A dictionary containing the session_id upon successful login.
         Example: {"session_id": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"}
     """
-    logger.info(f"Executing login tool for user '{username}' on host '{host}'")
+    # Use env vars as defaults
+    actual_host = host or settings.host
+    actual_username = username or settings.get_username_value()
+    actual_password = password or settings.get_password_value()
+
+    if not actual_host:
+        raise ValueError("Host URL required. Set TAIGA_API_URL or provide 'host' parameter.")
+    if not actual_username or not actual_password:
+        raise ValueError(
+            "Credentials required. Set TAIGA_USERNAME/TAIGA_PASSWORD or provide parameters."
+        )
+
+    logger.info(f"Executing login tool on host '{actual_host}'")
 
     try:
-        wrapper = TaigaClientWrapper(host=host)
-        login_successful = wrapper.login(username=username, password=password)
+        wrapper = TaigaClientWrapper(host=actual_host)
+        login_successful = wrapper.login(username=actual_username, password=actual_password)
 
         if login_successful:
             # Generate a unique session ID
             new_session_id = str(uuid.uuid4())
             # Store the authenticated wrapper in our manual session store
             active_sessions[new_session_id] = wrapper
-            logger.info(
-                f"Login successful for '{username}'. Created session ID: {new_session_id}")
+            logger.info("Login successful. Session created.")
             # Return the session ID to the client
             return {"session_id": new_session_id}
         else:
             # Should not happen if login raises exception on failure, but handle defensively
-            logger.error(
-                f"Login attempt for '{username}' returned False unexpectedly.")
+            logger.error("Login attempt returned False unexpectedly.")
             raise RuntimeError("Login failed for an unknown reason.")
 
     except (ValueError, TaigaException) as e:
-        logger.error(f"Login failed for '{username}': {e}", exc_info=False)
+        logger.error(f"Login failed: {e}", exc_info=False)
         # Re-raise the exception - FastMCP will turn it into an error response
         raise e
     except Exception as e:
-        logger.error(
-            f"Unexpected error during login for '{username}': {e}", exc_info=True)
-        raise RuntimeError(
-            f"An unexpected server error occurred during login: {e}")
-
-# server_fastmcp.py
-
-# ... (keep existing imports, logging setup, active_sessions, FastMCP instance) ...
-# ... (keep _get_authenticated_client helper function) ...
-# ... (keep login tool function) ...
-
+        logger.error(f"Unexpected error during login: {e}", exc_info=True)
+        raise RuntimeError("An unexpected server error occurred during login.")
 
 # --- Project Tools ---
 
-@mcp.tool("list_projects", description="Lists projects accessible to the user associated with the provided session_id.")
-def list_projects(session_id: str) -> List[Dict[str, Any]]:
+@mcp.tool("list_projects", description="Lists projects accessible to the authenticated user. Uses default session if session_id not provided.")
+def list_projects(session_id: Optional[str] = None) -> List[Dict[str, Any]]:
     """Lists projects accessible by the authenticated user."""
-    logger.info(f"Executing list_projects for session {session_id[:8]}...")
-    taiga_client_wrapper = _get_authenticated_client(session_id) # Use wrapper variable name
+    actual_session_id = _get_session_id(session_id)
+    logger.info(f"Executing list_projects for session {actual_session_id[:8]}...")
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
     try:
         # Use pytaigaclient syntax: client.resource.method()
         projects = taiga_client_wrapper.api.projects.list()
         # Remove .to_dict() as pytaigaclient should return dicts
         # result = [p.to_dict() for p in projects]
         logger.info(
-            f"list_projects successful for session {session_id[:8]}, found {len(projects)} projects.")
+            f"list_projects successful for session {actual_session_id[:8]}, found {len(projects)} projects.")
         return projects # Return directly
     except TaigaException as e:
         logger.error(f"Taiga API error listing projects: {e}", exc_info=False)
@@ -129,20 +241,22 @@ def list_projects(session_id: str) -> List[Dict[str, Any]]:
         raise RuntimeError(f"Server error listing projects: {e}")
 
 
-@mcp.tool("list_all_projects", description="Lists all projects visible to the user (requires admin privileges for full list). Uses the provided session_id.")
-def list_all_projects(session_id: str) -> List[Dict[str, Any]]:
+@mcp.tool("list_all_projects", description="Lists all projects visible to the user (requires admin privileges for full list). Uses default session if session_id not provided.")
+def list_all_projects(session_id: Optional[str] = None) -> List[Dict[str, Any]]:
     """Lists all projects visible to the authenticated user (scope depends on permissions)."""
-    logger.info(f"Executing list_all_projects for session {session_id[:8]}...")
+    actual_session_id = _get_session_id(session_id)
+    logger.info(f"Executing list_all_projects for session {actual_session_id[:8]}...")
     # pytaigaclient's list() likely behaves similarly to python-taiga's
-    return list_projects(session_id) # Keep delegation
+    return list_projects(actual_session_id) # Keep delegation
 
 
-@mcp.tool("get_project", description="Gets detailed information about a specific project by its ID.")
-def get_project(session_id: str, project_id: int) -> Dict[str, Any]:
+@mcp.tool("get_project", description="Gets detailed information about a specific project by its ID. Uses default session if session_id not provided.")
+def get_project(project_id: int, session_id: Optional[str] = None) -> Dict[str, Any]:
     """Retrieves project details by ID."""
+    actual_session_id = _get_session_id(session_id)
     logger.info(
-        f"Executing get_project ID {project_id} for session {session_id[:8]}...")
-    taiga_client_wrapper = _get_authenticated_client(session_id) # Use wrapper variable name
+        f"Executing get_project ID {project_id} for session {actual_session_id[:8]}...")
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
     try:
         # Use pytaigaclient syntax: client.resource.get(project_id)
         project = taiga_client_wrapper.api.projects.get(project_id)
@@ -158,12 +272,13 @@ def get_project(session_id: str, project_id: int) -> Dict[str, Any]:
         raise RuntimeError(f"Server error getting project: {e}")
 
 
-@mcp.tool("get_project_by_slug", description="Gets detailed information about a specific project by its slug.")
-def get_project_by_slug(session_id: str, slug: str) -> Dict[str, Any]:
+@mcp.tool("get_project_by_slug", description="Gets detailed information about a specific project by its slug. Uses default session if session_id not provided.")
+def get_project_by_slug(slug: str, session_id: Optional[str] = None) -> Dict[str, Any]:
     """Retrieves project details by slug."""
+    actual_session_id = _get_session_id(session_id)
     logger.info(
-        f"Executing get_project_by_slug '{slug}' for session {session_id[:8]}...")
-    taiga_client_wrapper = _get_authenticated_client(session_id) # Use wrapper variable name
+        f"Executing get_project_by_slug '{slug}' for session {actual_session_id[:8]}...")
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
     try:
         # Use pytaigaclient syntax: client.resource.get(slug=...)
         project = taiga_client_wrapper.api.projects.get(slug=slug)
@@ -179,12 +294,15 @@ def get_project_by_slug(session_id: str, slug: str) -> Dict[str, Any]:
         raise RuntimeError(f"Server error getting project by slug: {e}")
 
 
-@mcp.tool("create_project", description="Creates a new project.")
-def create_project(session_id: str, name: str, description: str, **kwargs) -> Dict[str, Any]:
+@mcp.tool("create_project", description="Creates a new project. Uses default session if session_id not provided.")
+def create_project(name: str, description: str, session_id: Optional[str] = None, **kwargs) -> Dict[str, Any]:
     """Creates a new project. Requires name and description. Optional args (e.g., is_private) via kwargs."""
+    actual_session_id = _get_session_id(session_id)
     logger.info(
-        f"Executing create_project '{name}' for session {session_id[:8]} with data: {kwargs}")
-    taiga_client_wrapper = _get_authenticated_client(session_id)
+        f"Executing create_project '{name}' for session {actual_session_id[:8]} with data: {kwargs}")
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
+    # Parse kwargs in case they come as a JSON string from MCP
+    kwargs = _parse_mcp_kwargs(kwargs)
     if not name or not description:
         raise ValueError("Project name and description are required.")
     try:
@@ -204,12 +322,15 @@ def create_project(session_id: str, name: str, description: str, **kwargs) -> Di
         raise RuntimeError(f"Server error creating project: {e}")
 
 
-@mcp.tool("update_project", description="Updates details of an existing project.")
-def update_project(session_id: str, project_id: int, **kwargs) -> Dict[str, Any]:
+@mcp.tool("update_project", description="Updates details of an existing project. Uses default session if session_id not provided.")
+def update_project(project_id: int, session_id: Optional[str] = None, **kwargs) -> Dict[str, Any]:
     """Updates a project. Pass fields to update as keyword arguments (e.g., name='New Name', description='New Desc')."""
+    actual_session_id = _get_session_id(session_id)
     logger.info(
-        f"Executing update_project ID {project_id} for session {session_id[:8]} with data: {kwargs}")
-    taiga_client_wrapper = _get_authenticated_client(session_id) # Use wrapper variable name
+        f"Executing update_project ID {project_id} for session {actual_session_id[:8]} with data: {kwargs}")
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
+    # Parse kwargs in case they come as a JSON string from MCP
+    kwargs = _parse_mcp_kwargs(kwargs)
     try:
         # Use pytaigaclient update pattern: client.resource.update(id=..., data=...)
         if not kwargs:
@@ -242,15 +363,16 @@ def update_project(session_id: str, project_id: int, **kwargs) -> Dict[str, Any]
         raise RuntimeError(f"Server error updating project: {e}")
 
 
-@mcp.tool("delete_project", description="Deletes a project by its ID. This is irreversible.")
-def delete_project(session_id: str, project_id: int) -> Dict[str, Any]:
+@mcp.tool("delete_project", description="Deletes a project by its ID. This is irreversible. Uses default session if session_id not provided.")
+def delete_project(project_id: int, session_id: Optional[str] = None) -> Dict[str, Any]:
     """Deletes a project by ID."""
+    actual_session_id = _get_session_id(session_id)
     logger.warning(
-        f"Executing delete_project ID {project_id} for session {session_id[:8]}...")
-    taiga_client_wrapper = _get_authenticated_client(session_id) # Use wrapper variable name
+        f"Executing delete_project ID {project_id} for session {actual_session_id[:8]}...")
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
     try:
-        # Use pytaigaclient syntax: client.resource.delete(id=...)
-        taiga_client_wrapper.api.projects.delete(id=project_id)
+        # pytaigaclient uses named args matching the parameter (e.g., project_id, not id)
+        taiga_client_wrapper.api.projects.delete(project_id=project_id)
         logger.info(f"Project {project_id} deleted successfully.")
         return {"status": "deleted", "project_id": project_id}
     except TaigaException as e:
@@ -263,20 +385,16 @@ def delete_project(session_id: str, project_id: int) -> Dict[str, Any]:
         raise RuntimeError(f"Server error deleting project: {e}")
 
 
-# @mcp.tool("get_project_roles", description="Lists the available roles within a specific project.")
-# def get_project_roles(session_id: str, project_id: int) -> List[Dict[str, Any]]:
-#     """Retrieves the list of roles for a project. (REMOVED - Not directly supported by pytaigaclient)"""
-#     logger.warning(f"get_project_roles called, but not supported by pytaigaclient. Project: {project_id}")
-#     raise NotImplementedError("Listing project-specific roles is not currently supported by the pytaigaclient wrapper.")
-
 # --- User Story Tools ---
+# Note: get_project_roles, get_*_by_ref functions not implemented - not supported by pytaigaclient
 
-@mcp.tool("list_user_stories", description="Lists user stories within a specific project, optionally filtered.")
-def list_user_stories(session_id: str, project_id: int, **filters) -> List[Dict[str, Any]]:
+@mcp.tool("list_user_stories", description="Lists user stories within a specific project, optionally filtered. Uses default session if session_id not provided.")
+def list_user_stories(project_id: int, session_id: Optional[str] = None, **filters) -> List[Dict[str, Any]]:
     """Lists user stories for a project. Optional filters like 'milestone', 'status', 'assigned_to' can be passed as keyword arguments."""
+    actual_session_id = _get_session_id(session_id)
     logger.info(
-        f"Executing list_user_stories for project {project_id}, session {session_id[:8]}, filters: {filters}")
-    taiga_client_wrapper = _get_authenticated_client(session_id) # Use wrapper variable name
+        f"Executing list_user_stories for project {project_id}, session {actual_session_id[:8]}, filters: {filters}")
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
     try:
         # Use pytaigaclient syntax: client.resource.list(project=..., **filters)
         stories = taiga_client_wrapper.api.user_stories.list(project=project_id, **filters)
@@ -292,12 +410,15 @@ def list_user_stories(session_id: str, project_id: int, **filters) -> List[Dict[
         raise RuntimeError(f"Server error listing user stories: {e}")
 
 
-@mcp.tool("create_user_story", description="Creates a new user story within a project.")
-def create_user_story(session_id: str, project_id: int, subject: str, **kwargs) -> Dict[str, Any]:
+@mcp.tool("create_user_story", description="Creates a new user story within a project. Uses default session if session_id not provided.")
+def create_user_story(project_id: int, subject: str, session_id: Optional[str] = None, **kwargs) -> Dict[str, Any]:
     """Creates a user story. Requires project_id and subject. Optional fields (description, milestone_id, status_id, assigned_to_id, etc.) via kwargs."""
+    actual_session_id = _get_session_id(session_id)
     logger.info(
-        f"Executing create_user_story '{subject}' in project {project_id}, session {session_id[:8]}...")
-    taiga_client_wrapper = _get_authenticated_client(session_id) # Use wrapper variable name
+        f"Executing create_user_story '{subject}' in project {project_id}, session {actual_session_id[:8]}...")
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
+    # Parse kwargs in case they come as a JSON string from MCP
+    kwargs = _parse_mcp_kwargs(kwargs)
     if not subject:
         raise ValueError("User story subject cannot be empty.")
     try:
@@ -318,12 +439,13 @@ def create_user_story(session_id: str, project_id: int, subject: str, **kwargs) 
         raise RuntimeError(f"Server error creating user story: {e}")
 
 
-@mcp.tool("get_user_story", description="Gets detailed information about a specific user story by its ID.")
-def get_user_story(session_id: str, user_story_id: int) -> Dict[str, Any]:
+@mcp.tool("get_user_story", description="Gets detailed information about a specific user story by its ID. Uses default session if session_id not provided.")
+def get_user_story(user_story_id: int, session_id: Optional[str] = None) -> Dict[str, Any]:
     """Retrieves user story details by ID."""
+    actual_session_id = _get_session_id(session_id)
     logger.info(
-        f"Executing get_user_story ID {user_story_id} for session {session_id[:8]}...")
-    taiga_client_wrapper = _get_authenticated_client(session_id) # Use wrapper variable name
+        f"Executing get_user_story ID {user_story_id} for session {actual_session_id[:8]}...")
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
     try:
         # User stories expects user_story_id as a positional argument
         story = taiga_client_wrapper.api.user_stories.get(user_story_id)
@@ -339,21 +461,16 @@ def get_user_story(session_id: str, user_story_id: int) -> Dict[str, Any]:
         raise RuntimeError(f"Server error getting user story: {e}")
 
 
-# @mcp.tool("get_user_story_by_ref", description="Gets detailed information about a specific user story by its reference number within a project.")
-# def get_user_story_by_ref(session_id: str, project_id: int, ref: int) -> Dict[str, Any]:
-#     """Retrieves user story details by project ID and reference number. (REMOVED - Not directly supported by pytaigaclient)"""
-#     logger.warning(f"get_user_story_by_ref called, but not supported by pytaigaclient. Project: {project_id}, Ref: {ref}")
-#     raise NotImplementedError("Getting user stories by reference number is not currently supported by the pytaigaclient wrapper.")
-
-
-@mcp.tool("update_user_story", description="Updates details of an existing user story.")
-def update_user_story(session_id: str, user_story_id: int, **kwargs) -> Dict[str, Any]:
+@mcp.tool("update_user_story", description="Updates details of an existing user story. Uses default session if session_id not provided.")
+def update_user_story(user_story_id: int, session_id: Optional[str] = None, **kwargs) -> Dict[str, Any]:
     """Updates a user story. Pass fields to update as keyword arguments (e.g., subject, description, status_id, assigned_to)."""
+    actual_session_id = _get_session_id(session_id)
     logger.info(
-        f"Executing update_user_story ID {user_story_id} for session {session_id[:8]} with data: {kwargs}")
-    taiga_client_wrapper = _get_authenticated_client(session_id) # Use wrapper variable name
+        f"Executing update_user_story ID {user_story_id} for session {actual_session_id[:8]} with data: {kwargs}")
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
+    # Parse kwargs in case they come as a JSON string from MCP
+    kwargs = _parse_mcp_kwargs(kwargs)
     try:
-        # Use pytaigaclient update pattern: client.resource.edit for partial updates
         if not kwargs:
              logger.info(f"No fields provided for update on user story {user_story_id}")
              return taiga_client_wrapper.api.user_stories.get(user_story_id)
@@ -382,15 +499,16 @@ def update_user_story(session_id: str, user_story_id: int, **kwargs) -> Dict[str
         raise RuntimeError(f"Server error updating user story: {e}")
 
 
-@mcp.tool("delete_user_story", description="Deletes a user story by its ID.")
-def delete_user_story(session_id: str, user_story_id: int) -> Dict[str, Any]:
+@mcp.tool("delete_user_story", description="Deletes a user story by its ID. Uses default session if session_id not provided.")
+def delete_user_story(user_story_id: int, session_id: Optional[str] = None) -> Dict[str, Any]:
     """Deletes a user story by ID."""
+    actual_session_id = _get_session_id(session_id)
     logger.warning(
-        f"Executing delete_user_story ID {user_story_id} for session {session_id[:8]}...")
-    taiga_client_wrapper = _get_authenticated_client(session_id) # Use wrapper variable name
+        f"Executing delete_user_story ID {user_story_id} for session {actual_session_id[:8]}...")
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
     try:
-        # Use pytaigaclient syntax: client.resource.delete(id=...)
-        taiga_client_wrapper.api.user_stories.delete(id=user_story_id)
+        # pytaigaclient uses named args matching the parameter (e.g., user_story_id, not id)
+        taiga_client_wrapper.api.user_stories.delete(user_story_id=user_story_id)
         logger.info(f"User story {user_story_id} deleted successfully.")
         return {"status": "deleted", "user_story_id": user_story_id}
     except TaigaException as e:
@@ -403,36 +521,37 @@ def delete_user_story(session_id: str, user_story_id: int) -> Dict[str, Any]:
         raise RuntimeError(f"Server error deleting user story: {e}")
 
 
-@mcp.tool("assign_user_story_to_user", description="Assigns a specific user story to a specific user.")
-def assign_user_story_to_user(session_id: str, user_story_id: int, user_id: int) -> Dict[str, Any]:
+@mcp.tool("assign_user_story_to_user", description="Assigns a specific user story to a specific user. Uses default session if session_id not provided.")
+def assign_user_story_to_user(user_story_id: int, user_id: int, session_id: Optional[str] = None) -> Dict[str, Any]:
     """Assigns a user story to a user."""
+    actual_session_id = _get_session_id(session_id)
     logger.info(
-        f"Executing assign_user_story_to_user: US {user_story_id} -> User {user_id}, session {session_id[:8]}...")
+        f"Executing assign_user_story_to_user: US {user_story_id} -> User {user_id}, session {actual_session_id[:8]}...")
     # Delegate to update_user_story, assuming 'assigned_to' key works
-    return update_user_story(session_id, user_story_id, assigned_to=user_id)
+    return update_user_story(user_story_id, actual_session_id, assigned_to=user_id)
 
 
-@mcp.tool("unassign_user_story_from_user", description="Unassigns a specific user story (sets assigned user to null).")
-def unassign_user_story_from_user(session_id: str, user_story_id: int) -> Dict[str, Any]:
+@mcp.tool("unassign_user_story_from_user", description="Unassigns a specific user story (sets assigned user to null). Uses default session if session_id not provided.")
+def unassign_user_story_from_user(user_story_id: int, session_id: Optional[str] = None) -> Dict[str, Any]:
     """Unassigns a user story."""
+    actual_session_id = _get_session_id(session_id)
     logger.info(
-        f"Executing unassign_user_story_from_user: US {user_story_id}, session {session_id[:8]}...")
+        f"Executing unassign_user_story_from_user: US {user_story_id}, session {actual_session_id[:8]}...")
     # Delegate to update_user_story with assigned_to=None
-    return update_user_story(session_id, user_story_id, assigned_to=None)
+    return update_user_story(user_story_id, actual_session_id, assigned_to=None)
 
 
-@mcp.tool("get_user_story_statuses", description="Lists the available statuses for user stories within a specific project.")
-def get_user_story_statuses(session_id: str, project_id: int) -> List[Dict[str, Any]]:
+@mcp.tool("get_user_story_statuses", description="Lists the available statuses for user stories within a specific project. Uses default session if session_id not provided.")
+def get_user_story_statuses(project_id: int, session_id: Optional[str] = None) -> List[Dict[str, Any]]:
     """Retrieves the list of user story statuses for a project."""
+    actual_session_id = _get_session_id(session_id)
     logger.info(
-        f"Executing get_user_story_statuses for project {project_id}, session {session_id[:8]}...")
-    taiga_client_wrapper = _get_authenticated_client(session_id) # Use wrapper variable name
+        f"Executing get_user_story_statuses for project {project_id}, session {actual_session_id[:8]}...")
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
     try:
-        # Use pytaigaclient syntax: client.resource.list(project_id=...)
-        # Update resource name: user_story_statuses -> userstory_statuses
-        statuses = taiga_client_wrapper.api.userstory_statuses.list(project_id=project_id)
-        # return [s.to_dict() for s in statuses] # Remove .to_dict()
-        return statuses # Return directly
+        # Use pytaigaclient syntax: client.resource.list(query_params={...})
+        statuses = taiga_client_wrapper.api.userstory_statuses.list(query_params={"project": project_id})
+        return statuses
     except TaigaException as e:
         logger.error(
             f"Taiga API error getting user story statuses for project {project_id}: {e}", exc_info=False)
@@ -445,17 +564,20 @@ def get_user_story_statuses(session_id: str, project_id: int) -> List[Dict[str, 
 
 # --- Task Tools ---
 
-@mcp.tool("list_tasks", description="Lists tasks within a specific project, optionally filtered.")
-def list_tasks(session_id: str, project_id: int, **filters) -> List[Dict[str, Any]]:
+@mcp.tool("list_tasks", description="Lists tasks within a specific project, optionally filtered. Uses default session if session_id not provided.")
+def list_tasks(project_id: int, session_id: Optional[str] = None, **filters) -> List[Dict[str, Any]]:
     """Lists tasks for a project. Optional filters like 'milestone', 'status', 'user_story', 'assigned_to' can be passed as keyword arguments."""
+    actual_session_id = _get_session_id(session_id)
     logger.info(
-        f"Executing list_tasks for project {project_id}, session {session_id[:8]}, filters: {filters}")
-    taiga_client_wrapper = _get_authenticated_client(session_id) # Use wrapper variable name
+        f"Executing list_tasks for project {project_id}, session {actual_session_id[:8]}, filters: {filters}")
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
     try:
-        # Use pytaigaclient syntax: client.resource.list(project=..., **filters)
-        tasks = taiga_client_wrapper.api.tasks.list(project=project_id, **filters)
-        # return [t.to_dict() for t in tasks] # Remove .to_dict()
-        return tasks # Return directly
+        # Workaround: pytaigaclient Tasks.list has a bug - passes query_params but TaigaClient.get expects params
+        # Use the underlying get method directly
+        parsed_filters = _parse_mcp_kwargs(filters)
+        query = {"project": project_id, **parsed_filters}
+        tasks = taiga_client_wrapper.api.get("/tasks", params=query)
+        return tasks
     except TaigaException as e:
         logger.error(
             f"Taiga API error listing tasks for project {project_id}: {e}", exc_info=False)
@@ -466,17 +588,20 @@ def list_tasks(session_id: str, project_id: int, **filters) -> List[Dict[str, An
         raise RuntimeError(f"Server error listing tasks: {e}")
 
 
-@mcp.tool("create_task", description="Creates a new task within a project.")
-def create_task(session_id: str, project_id: int, subject: str, **kwargs) -> Dict[str, Any]:
+@mcp.tool("create_task", description="Creates a new task within a project. Uses default session if session_id not provided.")
+def create_task(project_id: int, subject: str, session_id: Optional[str] = None, **kwargs) -> Dict[str, Any]:
     """Creates a task. Requires project_id and subject. Optional fields (description, milestone_id, status_id, user_story_id, assigned_to_id, etc.) via kwargs."""
+    actual_session_id = _get_session_id(session_id)
     logger.info(
-        f"Executing create_task '{subject}' in project {project_id}, session {session_id[:8]}...")
-    taiga_client_wrapper = _get_authenticated_client(session_id) # Use wrapper variable name
+        f"Executing create_task '{subject}' in project {project_id}, session {actual_session_id[:8]}...")
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
+    # Parse kwargs in case they come as a JSON string from MCP
+    kwargs = _parse_mcp_kwargs(kwargs)
     if not subject:
         raise ValueError("Task subject cannot be empty.")
     try:
-        # Use pytaigaclient syntax: client.resource.create(project=..., subject=..., **kwargs)
-        task = taiga_client_wrapper.api.tasks.create(project=project_id, subject=subject, **kwargs)
+        # pytaigaclient Tasks.create() uses: create(project, subject, data={...})
+        task = taiga_client_wrapper.api.tasks.create(project=project_id, subject=subject, data=kwargs if kwargs else None)
         logger.info(f"Task '{subject}' created successfully (ID: {task.get('id', 'N/A')}).")
         # return task.to_dict() # Remove .to_dict()
         return task # Return directly
@@ -490,12 +615,13 @@ def create_task(session_id: str, project_id: int, subject: str, **kwargs) -> Dic
         raise RuntimeError(f"Server error creating task: {e}")
 
 
-@mcp.tool("get_task", description="Gets detailed information about a specific task by its ID.")
-def get_task(session_id: str, task_id: int) -> Dict[str, Any]:
+@mcp.tool("get_task", description="Gets detailed information about a specific task by its ID. Uses default session if session_id not provided.")
+def get_task(task_id: int, session_id: Optional[str] = None) -> Dict[str, Any]:
     """Retrieves task details by ID."""
+    actual_session_id = _get_session_id(session_id)
     logger.info(
-        f"Executing get_task ID {task_id} for session {session_id[:8]}...")
-    taiga_client_wrapper = _get_authenticated_client(session_id) # Use wrapper variable name
+        f"Executing get_task ID {task_id} for session {actual_session_id[:8]}...")
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
     try:
         # Tasks expects task_id as a positional argument 
         task = taiga_client_wrapper.api.tasks.get(task_id)
@@ -511,19 +637,15 @@ def get_task(session_id: str, task_id: int) -> Dict[str, Any]:
         raise RuntimeError(f"Server error getting task: {e}")
 
 
-# @mcp.tool("get_task_by_ref", description="Gets detailed information about a specific task by its reference number within a project.")
-# def get_task_by_ref(session_id: str, project_id: int, ref: int) -> Dict[str, Any]:
-#     """Retrieves task details by project ID and reference number. (REMOVED - Not directly supported by pytaigaclient)"""
-#     logger.warning(f"get_task_by_ref called, but not supported by pytaigaclient. Project: {project_id}, Ref: {ref}")
-#     raise NotImplementedError("Getting tasks by reference number is not currently supported by the pytaigaclient wrapper.")
-
-
-@mcp.tool("update_task", description="Updates details of an existing task.")
-def update_task(session_id: str, task_id: int, **kwargs) -> Dict[str, Any]:
+@mcp.tool("update_task", description="Updates details of an existing task. Uses default session if session_id not provided.")
+def update_task(task_id: int, session_id: Optional[str] = None, **kwargs) -> Dict[str, Any]:
     """Updates a task. Pass fields to update as keyword arguments (e.g., subject, description, status_id, assigned_to)."""
+    actual_session_id = _get_session_id(session_id)
     logger.info(
-        f"Executing update_task ID {task_id} for session {session_id[:8]} with data: {kwargs}")
-    taiga_client_wrapper = _get_authenticated_client(session_id) # Use wrapper variable name
+        f"Executing update_task ID {task_id} for session {actual_session_id[:8]} with data: {kwargs}")
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
+    # Parse kwargs in case they come as a JSON string from MCP
+    kwargs = _parse_mcp_kwargs(kwargs)
     try:
         # Use pytaigaclient edit pattern for partial updates
         if not kwargs:
@@ -536,11 +658,11 @@ def update_task(session_id: str, task_id: int, **kwargs) -> Dict[str, Any]:
         if not version:
             raise ValueError(f"Could not determine version for task {task_id}")
             
-        # Use edit method for partial updates with keyword arguments
+        # Use edit method for partial updates - pytaigaclient uses data: Dict not **kwargs
         updated_task = taiga_client_wrapper.api.tasks.edit(
             task_id=task_id,
             version=version,
-            **kwargs
+            data=kwargs
         )
         logger.info(f"Task {task_id} update request sent.")
         return updated_task
@@ -554,15 +676,16 @@ def update_task(session_id: str, task_id: int, **kwargs) -> Dict[str, Any]:
         raise RuntimeError(f"Server error updating task: {e}")
 
 
-@mcp.tool("delete_task", description="Deletes a task by its ID.")
-def delete_task(session_id: str, task_id: int) -> Dict[str, Any]:
+@mcp.tool("delete_task", description="Deletes a task by its ID. Uses default session if session_id not provided.")
+def delete_task(task_id: int, session_id: Optional[str] = None) -> Dict[str, Any]:
     """Deletes a task by ID."""
+    actual_session_id = _get_session_id(session_id)
     logger.warning(
-        f"Executing delete_task ID {task_id} for session {session_id[:8]}...")
-    taiga_client_wrapper = _get_authenticated_client(session_id) # Use wrapper variable name
+        f"Executing delete_task ID {task_id} for session {actual_session_id[:8]}...")
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
     try:
-        # Use pytaigaclient syntax: client.resource.delete(id=...)
-        taiga_client_wrapper.api.tasks.delete(id=task_id)
+        # pytaigaclient uses named args matching the parameter (e.g., task_id, not id)
+        taiga_client_wrapper.api.tasks.delete(task_id=task_id)
         logger.info(f"Task {task_id} deleted successfully.")
         return {"status": "deleted", "task_id": task_id}
     except TaigaException as e:
@@ -575,43 +698,41 @@ def delete_task(session_id: str, task_id: int) -> Dict[str, Any]:
         raise RuntimeError(f"Server error deleting task: {e}")
 
 
-@mcp.tool("assign_task_to_user", description="Assigns a specific task to a specific user.")
-def assign_task_to_user(session_id: str, task_id: int, user_id: int) -> Dict[str, Any]:
+@mcp.tool("assign_task_to_user", description="Assigns a specific task to a specific user. Uses default session if session_id not provided.")
+def assign_task_to_user(task_id: int, user_id: int, session_id: Optional[str] = None) -> Dict[str, Any]:
     """Assigns a task to a user."""
+    actual_session_id = _get_session_id(session_id)
     logger.info(
-        f"Executing assign_task_to_user: Task {task_id} -> User {user_id}, session {session_id[:8]}...")
+        f"Executing assign_task_to_user: Task {task_id} -> User {user_id}, session {actual_session_id[:8]}...")
     # Delegate to update_task
-    return update_task(session_id, task_id, assigned_to=user_id)
+    return update_task(task_id, actual_session_id, assigned_to=user_id)
 
 
-@mcp.tool("unassign_task_from_user", description="Unassigns a specific task (sets assigned user to null).")
-def unassign_task_from_user(session_id: str, task_id: int) -> Dict[str, Any]:
+@mcp.tool("unassign_task_from_user", description="Unassigns a specific task (sets assigned user to null). Uses default session if session_id not provided.")
+def unassign_task_from_user(task_id: int, session_id: Optional[str] = None) -> Dict[str, Any]:
     """Unassigns a task."""
+    actual_session_id = _get_session_id(session_id)
     logger.info(
-        f"Executing unassign_task_from_user: Task {task_id}, session {session_id[:8]}...")
+        f"Executing unassign_task_from_user: Task {task_id}, session {actual_session_id[:8]}...")
     # Delegate to update_task
-    return update_task(session_id, task_id, assigned_to=None)
+    return update_task(task_id, actual_session_id, assigned_to=None)
 
-
-# @mcp.tool("get_task_statuses", description="Lists the available statuses for tasks within a specific project.")
-# def get_task_statuses(session_id: str, project_id: int) -> List[Dict[str, Any]]:
-#     """Retrieves the list of task statuses for a project. (REMOVED - Not directly supported by pytaigaclient)"""
-#     logger.warning(f"get_task_statuses called, but not supported by pytaigaclient. Project: {project_id}")
-#     raise NotImplementedError("Listing task statuses is not currently supported by the pytaigaclient wrapper.")
 
 # --- Issue Tools ---
 
-@mcp.tool("list_issues", description="Lists issues within a specific project, optionally filtered.")
-def list_issues(session_id: str, project_id: int, **filters) -> List[Dict[str, Any]]:
+@mcp.tool("list_issues", description="Lists issues within a specific project, optionally filtered. Uses default session if session_id not provided.")
+def list_issues(project_id: int, session_id: Optional[str] = None, **filters) -> List[Dict[str, Any]]:
     """Lists issues for a project. Optional filters like 'milestone', 'status', 'priority', 'severity', 'type', 'assigned_to' can be passed as kwargs."""
+    actual_session_id = _get_session_id(session_id)
     logger.info(
-        f"Executing list_issues for project {project_id}, session {session_id[:8]}, filters: {filters}")
-    taiga_client_wrapper = _get_authenticated_client(session_id) # Use wrapper variable name
+        f"Executing list_issues for project {project_id}, session {actual_session_id[:8]}, filters: {filters}")
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
     try:
-        # Use pytaigaclient syntax: client.resource.list(project_id=..., **filters)
-        issues = taiga_client_wrapper.api.issues.list(project_id=project_id, **filters)
-        # return [i.to_dict() for i in issues] # Remove .to_dict()
-        return issues # Return directly
+        # Use pytaigaclient syntax: client.resource.list(query_params={...})
+        parsed_filters = _parse_mcp_kwargs(filters)
+        query = {"project": project_id, **parsed_filters}
+        issues = taiga_client_wrapper.api.issues.list(query_params=query)
+        return issues
     except TaigaException as e:
         logger.error(
             f"Taiga API error listing issues for project {project_id}: {e}", exc_info=False)
@@ -622,25 +743,31 @@ def list_issues(session_id: str, project_id: int, **filters) -> List[Dict[str, A
         raise RuntimeError(f"Server error listing issues: {e}")
 
 
-@mcp.tool("create_issue", description="Creates a new issue within a project.")
-def create_issue(session_id: str, project_id: int, subject: str, priority_id: int, status_id: int, severity_id: int, type_id: int, **kwargs) -> Dict[str, Any]:
+@mcp.tool("create_issue", description="Creates a new issue within a project. Uses default session if session_id not provided.")
+def create_issue(project_id: int, subject: str, priority_id: int, status_id: int, severity_id: int, type_id: int, session_id: Optional[str] = None, **kwargs) -> Dict[str, Any]:
     """Creates an issue. Requires project_id, subject, priority_id, status_id, severity_id, type_id. Optional fields (description, assigned_to_id, etc.) via kwargs."""
+    actual_session_id = _get_session_id(session_id)
     logger.info(
-        f"Executing create_issue '{subject}' in project {project_id}, session {session_id[:8]}...")
-    taiga_client_wrapper = _get_authenticated_client(session_id) # Use wrapper variable name
+        f"Executing create_issue '{subject}' in project {project_id}, session {actual_session_id[:8]}...")
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
+    # Parse kwargs in case they come as a JSON string from MCP
+    kwargs = _parse_mcp_kwargs(kwargs)
     if not subject:
         raise ValueError("Issue subject cannot be empty.")
     try:
-        # Use pytaigaclient syntax: client.resource.create(...)
-        # Assuming pytaigaclient expects _id suffix for relational fields in create, but 'project' for project itself
-        issue = taiga_client_wrapper.api.issues.create(
-            project=project_id,         # Changed project_id to project
-            subject=subject,
-            priority_id=priority_id, # Assume _id suffix
-            status_id=status_id,     # Assume _id suffix
-            type_id=type_id,         # Assume _id suffix
-            severity_id=severity_id, # Assume _id suffix
+        # pytaigaclient Issues.create() uses: create(project, subject, data={...})
+        # Pack all extra fields into the data dict
+        issue_data = {
+            "priority": priority_id,
+            "status": status_id,
+            "type": type_id,
+            "severity": severity_id,
             **kwargs
+        }
+        issue = taiga_client_wrapper.api.issues.create(
+            project=project_id,
+            subject=subject,
+            data=issue_data
         )
         logger.info(
             f"Issue '{subject}' created successfully (ID: {issue.get('id', 'N/A')}).")
@@ -656,12 +783,13 @@ def create_issue(session_id: str, project_id: int, subject: str, priority_id: in
         raise RuntimeError(f"Server error creating issue: {e}")
 
 
-@mcp.tool("get_issue", description="Gets detailed information about a specific issue by its ID.")
-def get_issue(session_id: str, issue_id: int) -> Dict[str, Any]:
+@mcp.tool("get_issue", description="Gets detailed information about a specific issue by its ID. Uses default session if session_id not provided.")
+def get_issue(issue_id: int, session_id: Optional[str] = None) -> Dict[str, Any]:
     """Retrieves issue details by ID."""
+    actual_session_id = _get_session_id(session_id)
     logger.info(
-        f"Executing get_issue ID {issue_id} for session {session_id[:8]}...")
-    taiga_client_wrapper = _get_authenticated_client(session_id) # Use wrapper variable name
+        f"Executing get_issue ID {issue_id} for session {actual_session_id[:8]}...")
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
     try:
         # Issues expects issue_id as a positional argument
         issue = taiga_client_wrapper.api.issues.get(issue_id)
@@ -677,19 +805,15 @@ def get_issue(session_id: str, issue_id: int) -> Dict[str, Any]:
         raise RuntimeError(f"Server error getting issue: {e}")
 
 
-# @mcp.tool("get_issue_by_ref", description="Gets detailed information about a specific issue by its reference number within a project.")
-# def get_issue_by_ref(session_id: str, project_id: int, ref: int) -> Dict[str, Any]:
-#     """Retrieves issue details by project ID and reference number. (REMOVED - Not directly supported by pytaigaclient)"""
-#     logger.warning(f"get_issue_by_ref called, but not supported by pytaigaclient. Project: {project_id}, Ref: {ref}")
-#     raise NotImplementedError("Getting issues by reference number is not currently supported by the pytaigaclient wrapper.")
-
-
-@mcp.tool("update_issue", description="Updates details of an existing issue.")
-def update_issue(session_id: str, issue_id: int, **kwargs) -> Dict[str, Any]:
+@mcp.tool("update_issue", description="Updates details of an existing issue. Uses default session if session_id not provided.")
+def update_issue(issue_id: int, session_id: Optional[str] = None, **kwargs) -> Dict[str, Any]:
     """Updates an issue. Pass fields to update as keyword arguments (e.g., subject, description, status_id, assigned_to)."""
+    actual_session_id = _get_session_id(session_id)
     logger.info(
-        f"Executing update_issue ID {issue_id} for session {session_id[:8]} with data: {kwargs}")
-    taiga_client_wrapper = _get_authenticated_client(session_id) # Use wrapper variable name
+        f"Executing update_issue ID {issue_id} for session {actual_session_id[:8]} with data: {kwargs}")
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
+    # Parse kwargs in case they come as a JSON string from MCP
+    kwargs = _parse_mcp_kwargs(kwargs)
     try:
         # Use pytaigaclient edit pattern for partial updates
         if not kwargs:
@@ -702,11 +826,11 @@ def update_issue(session_id: str, issue_id: int, **kwargs) -> Dict[str, Any]:
         if not version:
             raise ValueError(f"Could not determine version for issue {issue_id}")
             
-        # Use edit method for partial updates with keyword arguments
+        # Use edit method for partial updates - pytaigaclient uses data: Dict not **kwargs
         updated_issue = taiga_client_wrapper.api.issues.edit(
             issue_id=issue_id,
             version=version,
-            **kwargs
+            data=kwargs
         )
         logger.info(f"Issue {issue_id} update request sent.")
         return updated_issue
@@ -720,15 +844,16 @@ def update_issue(session_id: str, issue_id: int, **kwargs) -> Dict[str, Any]:
         raise RuntimeError(f"Server error updating issue: {e}")
 
 
-@mcp.tool("delete_issue", description="Deletes an issue by its ID.")
-def delete_issue(session_id: str, issue_id: int) -> Dict[str, Any]:
+@mcp.tool("delete_issue", description="Deletes an issue by its ID. Uses default session if session_id not provided.")
+def delete_issue(issue_id: int, session_id: Optional[str] = None) -> Dict[str, Any]:
     """Deletes an issue by ID."""
+    actual_session_id = _get_session_id(session_id)
     logger.warning(
-        f"Executing delete_issue ID {issue_id} for session {session_id[:8]}...")
-    taiga_client_wrapper = _get_authenticated_client(session_id) # Use wrapper variable name
+        f"Executing delete_issue ID {issue_id} for session {actual_session_id[:8]}...")
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
     try:
-        # Use pytaigaclient syntax: client.resource.delete(id=...)
-        taiga_client_wrapper.api.issues.delete(id=issue_id)
+        # pytaigaclient uses named args matching the parameter (e.g., issue_id, not id)
+        taiga_client_wrapper.api.issues.delete(issue_id=issue_id)
         logger.info(f"Issue {issue_id} deleted successfully.")
         return {"status": "deleted", "issue_id": issue_id}
     except TaigaException as e:
@@ -741,35 +866,37 @@ def delete_issue(session_id: str, issue_id: int) -> Dict[str, Any]:
         raise RuntimeError(f"Server error deleting issue: {e}")
 
 
-@mcp.tool("assign_issue_to_user", description="Assigns a specific issue to a specific user.")
-def assign_issue_to_user(session_id: str, issue_id: int, user_id: int) -> Dict[str, Any]:
+@mcp.tool("assign_issue_to_user", description="Assigns a specific issue to a specific user. Uses default session if session_id not provided.")
+def assign_issue_to_user(issue_id: int, user_id: int, session_id: Optional[str] = None) -> Dict[str, Any]:
     """Assigns an issue to a user."""
+    actual_session_id = _get_session_id(session_id)
     logger.info(
-        f"Executing assign_issue_to_user: Issue {issue_id} -> User {user_id}, session {session_id[:8]}...")
+        f"Executing assign_issue_to_user: Issue {issue_id} -> User {user_id}, session {actual_session_id[:8]}...")
     # Delegate to update_issue
-    return update_issue(session_id, issue_id, assigned_to=user_id)
+    return update_issue(issue_id, actual_session_id, assigned_to=user_id)
 
 
-@mcp.tool("unassign_issue_from_user", description="Unassigns a specific issue (sets assigned user to null).")
-def unassign_issue_from_user(session_id: str, issue_id: int) -> Dict[str, Any]:
+@mcp.tool("unassign_issue_from_user", description="Unassigns a specific issue (sets assigned user to null). Uses default session if session_id not provided.")
+def unassign_issue_from_user(issue_id: int, session_id: Optional[str] = None) -> Dict[str, Any]:
     """Unassigns an issue."""
+    actual_session_id = _get_session_id(session_id)
     logger.info(
-        f"Executing unassign_issue_from_user: Issue {issue_id}, session {session_id[:8]}...")
+        f"Executing unassign_issue_from_user: Issue {issue_id}, session {actual_session_id[:8]}...")
     # Delegate to update_issue
-    return update_issue(session_id, issue_id, assigned_to=None)
+    return update_issue(issue_id, actual_session_id, assigned_to=None)
 
 
-@mcp.tool("get_issue_statuses", description="Lists the available statuses for issues within a specific project.")
-def get_issue_statuses(session_id: str, project_id: int) -> List[Dict[str, Any]]:
+@mcp.tool("get_issue_statuses", description="Lists the available statuses for issues within a specific project. Uses default session if session_id not provided.")
+def get_issue_statuses(project_id: int, session_id: Optional[str] = None) -> List[Dict[str, Any]]:
     """Retrieves the list of issue statuses for a project."""
+    actual_session_id = _get_session_id(session_id)
     logger.info(
-        f"Executing get_issue_statuses for project {project_id}, session {session_id[:8]}...")
-    taiga_client_wrapper = _get_authenticated_client(session_id) # Use wrapper variable name
+        f"Executing get_issue_statuses for project {project_id}, session {actual_session_id[:8]}...")
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
     try:
-        # Use pytaigaclient syntax: client.resource.list(project_id=...)
-        statuses = taiga_client_wrapper.api.issue_statuses.list(project_id=project_id)
-        # return [s.to_dict() for s in statuses] # Remove .to_dict()
-        return statuses # Return directly
+        # Use pytaigaclient syntax: client.resource.list(query_params={...})
+        statuses = taiga_client_wrapper.api.issue_statuses.list(query_params={"project": project_id})
+        return statuses
     except TaigaException as e:
         logger.error(
             f"Taiga API error getting issue statuses for project {project_id}: {e}", exc_info=False)
@@ -780,18 +907,17 @@ def get_issue_statuses(session_id: str, project_id: int) -> List[Dict[str, Any]]
         raise RuntimeError(f"Server error getting issue statuses: {e}")
 
 
-@mcp.tool("get_issue_priorities", description="Lists the available priorities for issues within a specific project.")
-def get_issue_priorities(session_id: str, project_id: int) -> List[Dict[str, Any]]:
+@mcp.tool("get_issue_priorities", description="Lists the available priorities for issues within a specific project. Uses default session if session_id not provided.")
+def get_issue_priorities(project_id: int, session_id: Optional[str] = None) -> List[Dict[str, Any]]:
     """Retrieves the list of issue priorities for a project."""
+    actual_session_id = _get_session_id(session_id)
     logger.info(
-        f"Executing get_issue_priorities for project {project_id}, session {session_id[:8]}...")
-    taiga_client_wrapper = _get_authenticated_client(session_id) # Use wrapper variable name
+        f"Executing get_issue_priorities for project {project_id}, session {actual_session_id[:8]}...")
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
     try:
-        # Use pytaigaclient syntax: client.resource.list(project_id=...)
-        # Update resource name: priorities -> issue_priorities
-        priorities = taiga_client_wrapper.api.issue_priorities.list(project_id=project_id)
-        # return [p.to_dict() for p in priorities] # Remove .to_dict()
-        return priorities # Return directly
+        # Use pytaigaclient syntax: client.resource.list(query_params={...})
+        priorities = taiga_client_wrapper.api.issue_priorities.list(query_params={"project": project_id})
+        return priorities
     except TaigaException as e:
         logger.error(
             f"Taiga API error getting issue priorities for project {project_id}: {e}", exc_info=False)
@@ -802,18 +928,17 @@ def get_issue_priorities(session_id: str, project_id: int) -> List[Dict[str, Any
         raise RuntimeError(f"Server error getting issue priorities: {e}")
 
 
-@mcp.tool("get_issue_severities", description="Lists the available severities for issues within a specific project.")
-def get_issue_severities(session_id: str, project_id: int) -> List[Dict[str, Any]]:
+@mcp.tool("get_issue_severities", description="Lists the available severities for issues within a specific project. Uses default session if session_id not provided.")
+def get_issue_severities(project_id: int, session_id: Optional[str] = None) -> List[Dict[str, Any]]:
     """Retrieves the list of issue severities for a project."""
+    actual_session_id = _get_session_id(session_id)
     logger.info(
-        f"Executing get_issue_severities for project {project_id}, session {session_id[:8]}...")
-    taiga_client_wrapper = _get_authenticated_client(session_id) # Use wrapper variable name
+        f"Executing get_issue_severities for project {project_id}, session {actual_session_id[:8]}...")
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
     try:
-        # Use pytaigaclient syntax: client.resource.list(project_id=...)
-        # Update resource name: severities -> issue_severities
-        severities = taiga_client_wrapper.api.issue_severities.list(project_id=project_id)
-        # return [s.to_dict() for s in severities] # Remove .to_dict()
-        return severities # Return directly
+        # Use pytaigaclient syntax: client.resource.list(query_params={...})
+        severities = taiga_client_wrapper.api.issue_severities.list(query_params={"project": project_id})
+        return severities
     except TaigaException as e:
         logger.error(
             f"Taiga API error getting issue severities for project {project_id}: {e}", exc_info=False)
@@ -824,17 +949,17 @@ def get_issue_severities(session_id: str, project_id: int) -> List[Dict[str, Any
         raise RuntimeError(f"Server error getting issue severities: {e}")
 
 
-@mcp.tool("get_issue_types", description="Lists the available types for issues within a specific project.")
-def get_issue_types(session_id: str, project_id: int) -> List[Dict[str, Any]]:
+@mcp.tool("get_issue_types", description="Lists the available types for issues within a specific project. Uses default session if session_id not provided.")
+def get_issue_types(project_id: int, session_id: Optional[str] = None) -> List[Dict[str, Any]]:
     """Retrieves the list of issue types for a project."""
+    actual_session_id = _get_session_id(session_id)
     logger.info(
-        f"Executing get_issue_types for project {project_id}, session {session_id[:8]}...")
-    taiga_client_wrapper = _get_authenticated_client(session_id) # Use wrapper variable name
+        f"Executing get_issue_types for project {project_id}, session {actual_session_id[:8]}...")
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
     try:
-        # Use pytaigaclient syntax: client.resource.list(project_id=...)
-        types = taiga_client_wrapper.api.issue_types.list(project_id=project_id)
-        # return [t.to_dict() for t in types] # Remove .to_dict()
-        return types # Return directly
+        # Use pytaigaclient syntax: client.resource.list(query_params={...})
+        types = taiga_client_wrapper.api.issue_types.list(query_params={"project": project_id})
+        return types
     except TaigaException as e:
         logger.error(
             f"Taiga API error getting issue types for project {project_id}: {e}", exc_info=False)
@@ -847,17 +972,19 @@ def get_issue_types(session_id: str, project_id: int) -> List[Dict[str, Any]]:
 
 # --- Epic Tools ---
 
-@mcp.tool("list_epics", description="Lists epics within a specific project, optionally filtered.")
-def list_epics(session_id: str, project_id: int, **filters) -> List[Dict[str, Any]]:
+@mcp.tool("list_epics", description="Lists epics within a specific project, optionally filtered. Uses default session if session_id not provided.")
+def list_epics(project_id: int, session_id: Optional[str] = None, **filters) -> List[Dict[str, Any]]:
     """Lists epics for a project. Optional filters like 'status', 'assigned_to' can be passed as keyword arguments."""
+    actual_session_id = _get_session_id(session_id)
     logger.info(
-        f"Executing list_epics for project {project_id}, session {session_id[:8]}, filters: {filters}")
-    taiga_client_wrapper = _get_authenticated_client(session_id) # Use wrapper variable name
+        f"Executing list_epics for project {project_id}, session {actual_session_id[:8]}, filters: {filters}")
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
     try:
-        # Use pytaigaclient syntax: client.resource.list(project_id=..., **filters)
-        epics = taiga_client_wrapper.api.epics.list(project_id=project_id, **filters)
-        # return [e.to_dict() for e in epics] # Remove .to_dict()
-        return epics # Return directly
+        # Use pytaigaclient syntax: client.resource.list(query_params={...})
+        parsed_filters = _parse_mcp_kwargs(filters)
+        query = {"project": project_id, **parsed_filters}
+        epics = taiga_client_wrapper.api.epics.list(query_params=query)
+        return epics
     except TaigaException as e:
         logger.error(
             f"Taiga API error listing epics for project {project_id}: {e}", exc_info=False)
@@ -868,12 +995,15 @@ def list_epics(session_id: str, project_id: int, **filters) -> List[Dict[str, An
         raise RuntimeError(f"Server error listing epics: {e}")
 
 
-@mcp.tool("create_epic", description="Creates a new epic within a project.")
-def create_epic(session_id: str, project_id: int, subject: str, **kwargs) -> Dict[str, Any]:
+@mcp.tool("create_epic", description="Creates a new epic within a project. Uses default session if session_id not provided.")
+def create_epic(project_id: int, subject: str, session_id: Optional[str] = None, **kwargs) -> Dict[str, Any]:
     """Creates an epic. Requires project_id and subject. Optional fields (description, status_id, assigned_to_id, color, etc.) via kwargs."""
+    actual_session_id = _get_session_id(session_id)
     logger.info(
-        f"Executing create_epic '{subject}' in project {project_id}, session {session_id[:8]}...")
-    taiga_client_wrapper = _get_authenticated_client(session_id) # Use wrapper variable name
+        f"Executing create_epic '{subject}' in project {project_id}, session {actual_session_id[:8]}...")
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
+    # Parse kwargs in case they come as a JSON string from MCP
+    kwargs = _parse_mcp_kwargs(kwargs)
     if not subject:
         raise ValueError("Epic subject cannot be empty.")
     try:
@@ -892,12 +1022,13 @@ def create_epic(session_id: str, project_id: int, subject: str, **kwargs) -> Dic
         raise RuntimeError(f"Server error creating epic: {e}")
 
 
-@mcp.tool("get_epic", description="Gets detailed information about a specific epic by its ID.")
-def get_epic(session_id: str, epic_id: int) -> Dict[str, Any]:
+@mcp.tool("get_epic", description="Gets detailed information about a specific epic by its ID. Uses default session if session_id not provided.")
+def get_epic(epic_id: int, session_id: Optional[str] = None) -> Dict[str, Any]:
     """Retrieves epic details by ID."""
+    actual_session_id = _get_session_id(session_id)
     logger.info(
-        f"Executing get_epic ID {epic_id} for session {session_id[:8]}...")
-    taiga_client_wrapper = _get_authenticated_client(session_id) # Use wrapper variable name
+        f"Executing get_epic ID {epic_id} for session {actual_session_id[:8]}...")
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
     try:
         # Epics expects epic_id as a positional argument
         epic = taiga_client_wrapper.api.epics.get(epic_id)
@@ -913,19 +1044,15 @@ def get_epic(session_id: str, epic_id: int) -> Dict[str, Any]:
         raise RuntimeError(f"Server error getting epic: {e}")
 
 
-# @mcp.tool("get_epic_by_ref", description="Gets detailed information about a specific epic by its reference number within a project.")
-# def get_epic_by_ref(session_id: str, project_id: int, ref: int) -> Dict[str, Any]:
-#     """Retrieves epic details by project ID and reference number. (REMOVED - Not directly supported by pytaigaclient)"""
-#     logger.warning(f"get_epic_by_ref called, but not supported by pytaigaclient. Project: {project_id}, Ref: {ref}")
-#     raise NotImplementedError("Getting epics by reference number is not currently supported by the pytaigaclient wrapper.")
-
-
-@mcp.tool("update_epic", description="Updates details of an existing epic.")
-def update_epic(session_id: str, epic_id: int, **kwargs) -> Dict[str, Any]:
+@mcp.tool("update_epic", description="Updates details of an existing epic. Uses default session if session_id not provided.")
+def update_epic(epic_id: int, session_id: Optional[str] = None, **kwargs) -> Dict[str, Any]:
     """Updates an epic. Pass fields to update as keyword arguments (e.g., subject, description, status_id, assigned_to, color)."""
+    actual_session_id = _get_session_id(session_id)
     logger.info(
-        f"Executing update_epic ID {epic_id} for session {session_id[:8]} with data: {kwargs}")
-    taiga_client_wrapper = _get_authenticated_client(session_id) # Use wrapper variable name
+        f"Executing update_epic ID {epic_id} for session {actual_session_id[:8]} with data: {kwargs}")
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
+    # Parse kwargs in case they come as a JSON string from MCP
+    kwargs = _parse_mcp_kwargs(kwargs)
     try:
         # Use pytaigaclient edit pattern for partial updates
         if not kwargs:
@@ -956,15 +1083,16 @@ def update_epic(session_id: str, epic_id: int, **kwargs) -> Dict[str, Any]:
         raise RuntimeError(f"Server error updating epic: {e}")
 
 
-@mcp.tool("delete_epic", description="Deletes an epic by its ID.")
-def delete_epic(session_id: str, epic_id: int) -> Dict[str, Any]:
+@mcp.tool("delete_epic", description="Deletes an epic by its ID. Uses default session if session_id not provided.")
+def delete_epic(epic_id: int, session_id: Optional[str] = None) -> Dict[str, Any]:
     """Deletes an epic by ID."""
+    actual_session_id = _get_session_id(session_id)
     logger.warning(
-        f"Executing delete_epic ID {epic_id} for session {session_id[:8]}...")
-    taiga_client_wrapper = _get_authenticated_client(session_id) # Use wrapper variable name
+        f"Executing delete_epic ID {epic_id} for session {actual_session_id[:8]}...")
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
     try:
-        # Use pytaigaclient syntax: client.resource.delete(id=...)
-        taiga_client_wrapper.api.epics.delete(id=epic_id)
+        # pytaigaclient uses named args matching the parameter (e.g., epic_id, not id)
+        taiga_client_wrapper.api.epics.delete(epic_id=epic_id)
         logger.info(f"Epic {epic_id} deleted successfully.")
         return {"status": "deleted", "epic_id": epic_id}
     except TaigaException as e:
@@ -977,43 +1105,39 @@ def delete_epic(session_id: str, epic_id: int) -> Dict[str, Any]:
         raise RuntimeError(f"Server error deleting epic: {e}")
 
 
-@mcp.tool("assign_epic_to_user", description="Assigns a specific epic to a specific user.")
-def assign_epic_to_user(session_id: str, epic_id: int, user_id: int) -> Dict[str, Any]:
+@mcp.tool("assign_epic_to_user", description="Assigns a specific epic to a specific user. Uses default session if session_id not provided.")
+def assign_epic_to_user(epic_id: int, user_id: int, session_id: Optional[str] = None) -> Dict[str, Any]:
     """Assigns an epic to a user."""
+    actual_session_id = _get_session_id(session_id)
     logger.info(
-        f"Executing assign_epic_to_user: Epic {epic_id} -> User {user_id}, session {session_id[:8]}...")
+        f"Executing assign_epic_to_user: Epic {epic_id} -> User {user_id}, session {actual_session_id[:8]}...")
     # Delegate to update_epic
-    return update_epic(session_id, epic_id, assigned_to=user_id)
+    return update_epic(epic_id, actual_session_id, assigned_to=user_id)
 
 
-@mcp.tool("unassign_epic_from_user", description="Unassigns a specific epic (sets assigned user to null).")
-def unassign_epic_from_user(session_id: str, epic_id: int) -> Dict[str, Any]:
+@mcp.tool("unassign_epic_from_user", description="Unassigns a specific epic (sets assigned user to null). Uses default session if session_id not provided.")
+def unassign_epic_from_user(epic_id: int, session_id: Optional[str] = None) -> Dict[str, Any]:
     """Unassigns an epic."""
+    actual_session_id = _get_session_id(session_id)
     logger.info(
-        f"Executing unassign_epic_from_user: Epic {epic_id}, session {session_id[:8]}...")
+        f"Executing unassign_epic_from_user: Epic {epic_id}, session {actual_session_id[:8]}...")
     # Delegate to update_epic
-    return update_epic(session_id, epic_id, assigned_to=None)
+    return update_epic(epic_id, actual_session_id, assigned_to=None)
 
-
-# @mcp.tool("get_epic_statuses", description="Lists the available statuses for epics within a specific project.")
-# def get_epic_statuses(session_id: str, project_id: int) -> List[Dict[str, Any]]:
-#     """Retrieves the list of epic statuses for a project. (REMOVED - Resource not found in pytaigaclient)"""
-#     logger.warning(f"get_epic_statuses called, but epic_statuses resource not found in pytaigaclient. Project: {project_id}")
-#     raise NotImplementedError("Listing epic statuses is not currently supported by the pytaigaclient wrapper.")
 
 # --- Milestone (Sprint) Tools ---
 
-@mcp.tool("list_milestones", description="Lists milestones (sprints) within a specific project.")
-def list_milestones(session_id: str, project_id: int) -> List[Dict[str, Any]]:
+@mcp.tool("list_milestones", description="Lists milestones (sprints) within a specific project. Uses default session if session_id not provided.")
+def list_milestones(project_id: int, session_id: Optional[str] = None) -> List[Dict[str, Any]]:
     """Lists milestones for a project."""
+    actual_session_id = _get_session_id(session_id)
     logger.info(
-        f"Executing list_milestones for project {project_id}, session {session_id[:8]}...")
-    taiga_client_wrapper = _get_authenticated_client(session_id) # Use wrapper variable name
+        f"Executing list_milestones for project {project_id}, session {actual_session_id[:8]}...")
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
     try:
-        # Use pytaigaclient syntax: client.resource.list(project_id=...)
-        milestones = taiga_client_wrapper.api.milestones.list(project_id=project_id)
-        # return [m.to_dict() for m in milestones] # Remove .to_dict()
-        return milestones # Return directly
+        # Use pytaigaclient syntax: milestones.list(project=...) - keyword arg
+        milestones = taiga_client_wrapper.api.milestones.list(project=project_id)
+        return milestones
     except TaigaException as e:
         logger.error(
             f"Taiga API error listing milestones for project {project_id}: {e}", exc_info=False)
@@ -1024,12 +1148,13 @@ def list_milestones(session_id: str, project_id: int) -> List[Dict[str, Any]]:
         raise RuntimeError(f"Server error listing milestones: {e}")
 
 
-@mcp.tool("create_milestone", description="Creates a new milestone (sprint) within a project.")
-def create_milestone(session_id: str, project_id: int, name: str, estimated_start: str, estimated_finish: str) -> Dict[str, Any]:
+@mcp.tool("create_milestone", description="Creates a new milestone (sprint) within a project. Uses default session if session_id not provided.")
+def create_milestone(project_id: int, name: str, estimated_start: str, estimated_finish: str, session_id: Optional[str] = None) -> Dict[str, Any]:
     """Creates a milestone. Requires project_id, name, estimated_start (YYYY-MM-DD), and estimated_finish (YYYY-MM-DD)."""
+    actual_session_id = _get_session_id(session_id)
     logger.info(
-        f"Executing create_milestone '{name}' in project {project_id}, session {session_id[:8]}...")
-    taiga_client_wrapper = _get_authenticated_client(session_id) # Use wrapper variable name
+        f"Executing create_milestone '{name}' in project {project_id}, session {actual_session_id[:8]}...")
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
     if not all([name, estimated_start, estimated_finish]):
         raise ValueError(
             "Milestone requires name, estimated_start, and estimated_finish.")
@@ -1055,12 +1180,13 @@ def create_milestone(session_id: str, project_id: int, name: str, estimated_star
         raise RuntimeError(f"Server error creating milestone: {e}")
 
 
-@mcp.tool("get_milestone", description="Gets detailed information about a specific milestone by its ID.")
-def get_milestone(session_id: str, milestone_id: int) -> Dict[str, Any]:
+@mcp.tool("get_milestone", description="Gets detailed information about a specific milestone by its ID. Uses default session if session_id not provided.")
+def get_milestone(milestone_id: int, session_id: Optional[str] = None) -> Dict[str, Any]:
     """Retrieves milestone details by ID."""
+    actual_session_id = _get_session_id(session_id)
     logger.info(
-        f"Executing get_milestone ID {milestone_id} for session {session_id[:8]}...")
-    taiga_client_wrapper = _get_authenticated_client(session_id) # Use wrapper variable name
+        f"Executing get_milestone ID {milestone_id} for session {actual_session_id[:8]}...")
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
     try:
         # Milestones expects milestone_id as a positional argument
         milestone = taiga_client_wrapper.api.milestones.get(milestone_id)
@@ -1076,12 +1202,15 @@ def get_milestone(session_id: str, milestone_id: int) -> Dict[str, Any]:
         raise RuntimeError(f"Server error getting milestone: {e}")
 
 
-@mcp.tool("update_milestone", description="Updates details of an existing milestone.")
-def update_milestone(session_id: str, milestone_id: int, **kwargs) -> Dict[str, Any]:
+@mcp.tool("update_milestone", description="Updates details of an existing milestone. Uses default session if session_id not provided.")
+def update_milestone(milestone_id: int, session_id: Optional[str] = None, **kwargs) -> Dict[str, Any]:
     """Updates a milestone. Pass fields to update as kwargs (e.g., name, estimated_start, estimated_finish)."""
+    actual_session_id = _get_session_id(session_id)
     logger.info(
-        f"Executing update_milestone ID {milestone_id} for session {session_id[:8]} with data: {kwargs}")
-    taiga_client_wrapper = _get_authenticated_client(session_id) # Use wrapper variable name
+        f"Executing update_milestone ID {milestone_id} for session {actual_session_id[:8]} with data: {kwargs}")
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
+    # Parse kwargs in case they come as a JSON string from MCP
+    kwargs = _parse_mcp_kwargs(kwargs)
     try:
         # Use pytaigaclient edit pattern for partial updates
         if not kwargs:
@@ -1112,15 +1241,16 @@ def update_milestone(session_id: str, milestone_id: int, **kwargs) -> Dict[str, 
         raise RuntimeError(f"Server error updating milestone: {e}")
 
 
-@mcp.tool("delete_milestone", description="Deletes a milestone by its ID.")
-def delete_milestone(session_id: str, milestone_id: int) -> Dict[str, Any]:
+@mcp.tool("delete_milestone", description="Deletes a milestone by its ID. Uses default session if session_id not provided.")
+def delete_milestone(milestone_id: int, session_id: Optional[str] = None) -> Dict[str, Any]:
     """Deletes a milestone by ID."""
+    actual_session_id = _get_session_id(session_id)
     logger.warning(
-        f"Executing delete_milestone ID {milestone_id} for session {session_id[:8]}...")
-    taiga_client_wrapper = _get_authenticated_client(session_id) # Use wrapper variable name
+        f"Executing delete_milestone ID {milestone_id} for session {actual_session_id[:8]}...")
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
     try:
-        # Use pytaigaclient syntax: client.resource.delete(id=...)
-        taiga_client_wrapper.api.milestones.delete(id=milestone_id)
+        # pytaigaclient uses named args matching the parameter (e.g., milestone_id, not id)
+        taiga_client_wrapper.api.milestones.delete(milestone_id=milestone_id)
         logger.info(f"Milestone {milestone_id} deleted successfully.")
         return {"status": "deleted", "milestone_id": milestone_id}
     except TaigaException as e:
@@ -1133,25 +1263,19 @@ def delete_milestone(session_id: str, milestone_id: int) -> Dict[str, Any]:
         raise RuntimeError(f"Server error deleting milestone: {e}")
 
 
-# @mcp.tool("get_milestone_stats", description="Gets statistics (total points, completed points, etc.) for a specific milestone.")
-# def get_milestone_stats(session_id: str, milestone_id: int) -> Dict[str, Any]:
-#     """Retrieves statistics for a milestone. (REMOVED - Not directly supported by pytaigaclient)"""
-#     logger.warning(f"get_milestone_stats called, but not supported by pytaigaclient. Milestone: {milestone_id}")
-#     raise NotImplementedError("Getting milestone statistics is not currently supported by the pytaigaclient wrapper.")
-
 # --- User Management Tools ---
 
-@mcp.tool("get_project_members", description="Lists members of a specific project.")
-def get_project_members(session_id: str, project_id: int) -> List[Dict[str, Any]]:
+@mcp.tool("get_project_members", description="Lists members of a specific project. Uses default session if session_id not provided.")
+def get_project_members(project_id: int, session_id: Optional[str] = None) -> List[Dict[str, Any]]:
     """Retrieves the list of members for a project."""
+    actual_session_id = _get_session_id(session_id)
     logger.info(
-        f"Executing get_project_members for project {project_id}, session {session_id[:8]}...")
-    taiga_client_wrapper = _get_authenticated_client(session_id) # Use wrapper variable name
+        f"Executing get_project_members for project {project_id}, session {actual_session_id[:8]}...")
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
     try:
-        # Use pytaigaclient memberships resource list method
-        members = taiga_client_wrapper.api.memberships.list(project_id=project_id)
-        # return [m.to_dict() for m in members] # Remove .to_dict()
-        return members # Return directly
+        # Use pytaigaclient syntax: client.resource.list(query_params={...})
+        members = taiga_client_wrapper.api.memberships.list(query_params={"project": project_id})
+        return members
     except TaigaException as e:
         logger.error(
             f"Taiga API error getting members for project {project_id}: {e}", exc_info=False)
@@ -1162,12 +1286,13 @@ def get_project_members(session_id: str, project_id: int) -> List[Dict[str, Any]
         raise RuntimeError(f"Server error getting project members: {e}")
 
 
-@mcp.tool("invite_project_user", description="Invites a user to a project by email with a specific role.")
-def invite_project_user(session_id: str, project_id: int, email: str, role_id: int) -> Dict[str, Any]:
+@mcp.tool("invite_project_user", description="Invites a user to a project by email with a specific role. Uses default session if session_id not provided.")
+def invite_project_user(project_id: int, email: str, role_id: int, session_id: Optional[str] = None) -> Dict[str, Any]:
     """Invites a user via email to join the project with the specified role ID."""
+    actual_session_id = _get_session_id(session_id)
     logger.info(
-        f"Executing invite_project_user {email} to project {project_id} (role {role_id}), session {session_id[:8]}...")
-    taiga_client_wrapper = _get_authenticated_client(session_id) # Use wrapper variable name
+        f"Executing invite_project_user {email} to project {project_id} (role {role_id}), session {actual_session_id[:8]}...")
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
     if not email:
         raise ValueError("Email cannot be empty.")
     try:
@@ -1191,17 +1316,17 @@ def invite_project_user(session_id: str, project_id: int, email: str, role_id: i
 
 # --- Wiki Tools ---
 
-@mcp.tool("list_wiki_pages", description="Lists wiki pages within a specific project.")
-def list_wiki_pages(session_id: str, project_id: int) -> List[Dict[str, Any]]:
+@mcp.tool("list_wiki_pages", description="Lists wiki pages within a specific project. Uses default session if session_id not provided.")
+def list_wiki_pages(project_id: int, session_id: Optional[str] = None) -> List[Dict[str, Any]]:
     """Lists wiki pages for a project."""
+    actual_session_id = _get_session_id(session_id)
     logger.info(
-        f"Executing list_wiki_pages for project {project_id}, session {session_id[:8]}...")
-    taiga_client_wrapper = _get_authenticated_client(session_id) # Use wrapper variable name
+        f"Executing list_wiki_pages for project {project_id}, session {actual_session_id[:8]}...")
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
     try:
-        # Use pytaigaclient syntax: client.wiki.list(project_id=...)
-        pages = taiga_client_wrapper.api.wiki.list(project_id=project_id)
-        # return [p.to_dict() for p in pages] # Remove .to_dict()
-        return pages # Return directly
+        # Use pytaigaclient syntax: client.resource.list(query_params={...})
+        pages = taiga_client_wrapper.api.wiki.list(query_params={"project": project_id})
+        return pages
     except TaigaException as e:
         logger.error(
             f"Taiga API error listing wiki pages for project {project_id}: {e}", exc_info=False)
@@ -1212,12 +1337,13 @@ def list_wiki_pages(session_id: str, project_id: int) -> List[Dict[str, Any]]:
         raise RuntimeError(f"Server error listing wiki pages: {e}")
 
 
-@mcp.tool("get_wiki_page", description="Gets a specific wiki page by its ID.")
-def get_wiki_page(session_id: str, wiki_page_id: int) -> Dict[str, Any]:
+@mcp.tool("get_wiki_page", description="Gets a specific wiki page by its ID. Uses default session if session_id not provided.")
+def get_wiki_page(wiki_page_id: int, session_id: Optional[str] = None) -> Dict[str, Any]:
     """Retrieves wiki page details by ID."""
+    actual_session_id = _get_session_id(session_id)
     logger.info(
-        f"Executing get_wiki_page ID {wiki_page_id} for session {session_id[:8]}...")
-    taiga_client_wrapper = _get_authenticated_client(session_id) # Use wrapper variable name
+        f"Executing get_wiki_page ID {wiki_page_id} for session {actual_session_id[:8]}...")
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
     try:
         # Wiki expects wiki_page_id as a positional argument
         page = taiga_client_wrapper.api.wiki.get(wiki_page_id)
@@ -1233,62 +1359,58 @@ def get_wiki_page(session_id: str, wiki_page_id: int) -> Dict[str, Any]:
         raise RuntimeError(f"Server error getting wiki page: {e}")
 
 
-# @mcp.tool("get_wiki_page_by_slug", description="Gets a specific wiki page by its slug within a project.")
-# def get_wiki_page_by_slug(session_id: str, project_id: int, slug: str) -> Dict[str, Any]:
-#     """Retrieves wiki page details by project ID and slug. (REMOVED - Not directly supported by pytaigaclient)"""
-#     logger.warning(f"get_wiki_page_by_slug called, but not supported by pytaigaclient. Project: {project_id}, Slug: {slug}")
-#     raise NotImplementedError("Getting wiki pages by slug is not currently supported by the pytaigaclient wrapper.")
-
 # --- Session Management Tools ---
 
-@mcp.tool("logout", description="Invalidates the current session_id.")
-def logout(session_id: str) -> Dict[str, Any]:
+@mcp.tool("logout", description="Invalidates the current session_id. Uses default session if session_id not provided.")
+def logout(session_id: Optional[str] = None) -> Dict[str, Any]:
     """Logs out the current session, invalidating the session_id."""
-    logger.info(f"Executing logout for session {session_id[:8]}...")
+    actual_session_id = _get_session_id(session_id)
+    logger.info(f"Executing logout for session {actual_session_id[:8]}...")
     # Remove from dict, return None if not found
-    client_wrapper = active_sessions.pop(session_id, None) # Use consistent var name
+    client_wrapper = active_sessions.pop(actual_session_id, None)
     if client_wrapper:
-        logger.info(f"Session {session_id[:8]} logged out successfully.")
+        logger.info(f"Session {actual_session_id[:8]} logged out successfully.")
         # No specific API logout call needed usually for token-based auth
-        return {"status": "logged_out", "session_id": session_id}
+        return {"status": "logged_out", "session_id": actual_session_id}
     else:
         logger.warning(
-            f"Attempted to log out non-existent session: {session_id}")
-        return {"status": "session_not_found", "session_id": session_id}
+            f"Attempted to log out non-existent session: {actual_session_id[:8]}")
+        return {"status": "session_not_found", "session_id": actual_session_id}
 
 
-@mcp.tool("session_status", description="Checks if the provided session_id is currently active and valid.")
-def session_status(session_id: str) -> Dict[str, Any]:
+@mcp.tool("session_status", description="Checks if the provided session_id is currently active and valid. Uses default session if session_id not provided.")
+def session_status(session_id: Optional[str] = None) -> Dict[str, Any]:
     """Checks the validity of the current session_id."""
+    actual_session_id = _get_session_id(session_id)
     logger.debug(
-        f"Executing session_status check for session {session_id[:8]}...")
-    client_wrapper = active_sessions.get(session_id) # Use consistent var name
+        f"Executing session_status check for session {actual_session_id[:8]}...")
+    client_wrapper = active_sessions.get(actual_session_id)
     if client_wrapper and client_wrapper.is_authenticated:
         try:
-            # Use pytaigaclient users.me() call
-            me = client_wrapper.api.users.me()
+            # Use pytaigaclient users.get_me() call
+            me = client_wrapper.api.users.get_me()
             # Extract username from the returned dict
             username = me.get('username', 'Unknown')
             logger.debug(
-                f"Session {session_id[:8]} is active for user {username}.")
-            return {"status": "active", "session_id": session_id, "username": username}
+                f"Session {actual_session_id[:8]} is active for user {username}.")
+            return {"status": "active", "session_id": actual_session_id, "username": username}
         except TaigaException:
             logger.warning(
-                f"Session {session_id[:8]} found but token seems invalid (API check failed).")
+                f"Session {actual_session_id[:8]} found but token seems invalid (API check failed).")
             # Clean up invalid session
-            active_sessions.pop(session_id, None)
-            return {"status": "inactive", "reason": "token_invalid", "session_id": session_id}
+            active_sessions.pop(actual_session_id, None)
+            return {"status": "inactive", "reason": "token_invalid", "session_id": actual_session_id}
         except Exception as e: # Catch broader exceptions during the 'me' call
-             logger.error(f"Unexpected error during session status check for {session_id[:8]}: {e}", exc_info=True)
+             logger.error(f"Unexpected error during session status check for {actual_session_id[:8]}: {e}", exc_info=True)
              # Return a distinct status for unexpected errors during check
-             return {"status": "error", "reason": "check_failed", "session_id": session_id}
+             return {"status": "error", "reason": "check_failed", "session_id": actual_session_id}
     elif client_wrapper: # Client exists but not authenticated (shouldn't happen with current login logic)
         logger.warning(
-            f"Session {session_id[:8]} exists but client wrapper is not authenticated.")
-        return {"status": "inactive", "reason": "not_authenticated", "session_id": session_id}
+            f"Session {actual_session_id[:8]} exists but client wrapper is not authenticated.")
+        return {"status": "inactive", "reason": "not_authenticated", "session_id": actual_session_id}
     else: # Session ID not found
-        logger.debug(f"Session {session_id[:8]} not found.")
-        return {"status": "inactive", "reason": "not_found", "session_id": session_id}
+        logger.debug(f"Session {actual_session_id[:8]} not found.")
+        return {"status": "inactive", "reason": "not_found", "session_id": actual_session_id}
 
 
 # --- Run the server ---
