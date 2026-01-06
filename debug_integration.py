@@ -4,6 +4,7 @@ Manual debugging script for integration tests.
 Run with: python debug_integration.py
 """
 import json
+import os
 import uuid
 import time
 
@@ -11,10 +12,10 @@ import time
 from src.server import login, list_projects, update_project, get_project
 from src.server import list_user_stories, create_user_story
 
-# Configure test parameters
-TEST_HOST = "http://localhost:9000"
-TEST_USERNAME = "test"
-TEST_PASSWORD = "test"
+# Configure test parameters - use environment variables or defaults
+TEST_HOST = os.environ.get("TAIGA_TEST_HOST", "http://localhost:9000")
+TEST_USERNAME = os.environ.get("TAIGA_TEST_USERNAME", "test")
+TEST_PASSWORD = os.environ.get("TAIGA_TEST_PASSWORD", "test")
 
 
 def print_json(label, data):
@@ -55,27 +56,27 @@ def debug_integration():
         print(f"PROJECT LIST ERROR: {e}")
         return
     
-    # 3. Get specific project details
+    # 3. Get specific project details - note: project_id first, then session_id
     try:
         print(f"\nGetting details for project ID {project_id}...")
-        project = get_project(session_id, project_id)
+        project = get_project(project_id, session_id)
         print_json("Project Details", project)
     except Exception as e:
         print(f"PROJECT DETAILS ERROR: {e}")
     
-    # 4. Create and verify user story
+    # 4. Create and verify user story - note: project_id first, subject second, then session_id
     try:
         subject = f"Debug Story {uuid.uuid4()}"
         print(f"\nCreating user story '{subject}' in project {project_id}...")
-        
-        story = create_user_story(session_id, project_id, subject, 
+
+        story = create_user_story(project_id, subject, session_id,
                                 description="Created by debug script")
         story_id = story["id"]
         print_json("Created Story", story)
-        
+
         print("\nListing user stories to verify creation...")
         time.sleep(1)  # Small delay to ensure creation is complete
-        stories = list_user_stories(session_id, project_id)
+        stories = list_user_stories(project_id, session_id)
         print(f"Found {len(stories)} stories")
         
         # Find our story

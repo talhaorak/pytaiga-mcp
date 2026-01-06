@@ -60,69 +60,68 @@ class TestTaigaTools:
     def test_update_project(self, session_setup):
         """Test update_project functionality"""
         session_id, mock_client = session_setup
-        
-        # Setup mock project
-        mock_project = MagicMock()
-        mock_project.id = 123
-        mock_project.name = "Old Name"
-        
-        # Setup allowed parameters for the project model
-        mock_client.api.projects.instance = MagicMock()
-        mock_client.api.projects.instance.allowed_params = ['name', 'description']
-        
-        # Setup get project return
-        mock_client.api.projects.get.return_value = mock_project
-        
-        # Update the project name
-        result = src.server.update_project(session_id, 123, name="New Name")
-        
-        # Verify the update was called
-        mock_project.update.assert_called_once()
-        assert mock_project.name == "New Name"
+
+        # Setup get project return with version (needed for update)
+        mock_client.api.projects.get.return_value = {"id": 123, "name": "Old Name", "version": 1}
+
+        # Setup update return
+        mock_client.api.projects.update.return_value = {"id": 123, "name": "New Name", "version": 2}
+
+        # Update the project name - note: project_id first, then session_id
+        result = src.server.update_project(123, session_id, name="New Name")
+
+        # Verify the update was called with correct parameters
+        mock_client.api.projects.update.assert_called_once_with(
+            project_id=123,
+            version=1,
+            project_data={"name": "New Name"}
+        )
+        assert result["name"] == "New Name"
     
     def test_list_user_stories(self, session_setup):
         """Test list_user_stories functionality"""
         session_id, mock_client = session_setup
-        
+
         # Setup list user stories return - return actual dictionaries
         mock_client.api.user_stories.list.return_value = [{"id": 456, "subject": "Test User Story"}]
-        
-        # List user stories and verify
-        stories = src.server.list_user_stories(session_id, 123)
+
+        # List user stories and verify - note: project_id first, then session_id
+        stories = src.server.list_user_stories(123, session_id)
         assert len(stories) == 1
         assert stories[0]["subject"] == "Test User Story"
         assert stories[0]["id"] == 456
-        
+
         # Verify the correct project filter was used
         mock_client.api.user_stories.list.assert_called_once_with(project=123)
     
     def test_create_user_story(self, session_setup):
         """Test create_user_story functionality"""
         session_id, mock_client = session_setup
-        
+
         # Setup create user story return - return actual dictionary
         mock_client.api.user_stories.create.return_value = {"id": 456, "subject": "New Story"}
-        
-        # Create user story and verify
-        story = src.server.create_user_story(session_id, 123, "New Story", description="Test description")
+
+        # Create user story and verify - note: project_id first, subject second, then session_id
+        story = src.server.create_user_story(123, "New Story", session_id, description="Test description")
         assert story["subject"] == "New Story"
         assert story["id"] == 456
-        
+
         # Verify the create was called with correct parameters
         mock_client.api.user_stories.create.assert_called_once_with(project=123, subject="New Story", description="Test description")
     
     def test_list_tasks(self, session_setup):
         """Test list_tasks functionality"""
         session_id, mock_client = session_setup
-        
-        # Setup list tasks return - return actual dictionaries
-        mock_client.api.tasks.list.return_value = [{"id": 789, "subject": "Test Task"}]
-        
-        # List tasks and verify
-        tasks = src.server.list_tasks(session_id, 123)
+
+        # Setup list tasks return - the code uses api.get("/tasks") instead of api.tasks.list()
+        # due to a pytaigaclient bug workaround
+        mock_client.api.get.return_value = [{"id": 789, "subject": "Test Task"}]
+
+        # List tasks and verify - note: project_id first, then session_id
+        tasks = src.server.list_tasks(123, session_id)
         assert len(tasks) == 1
         assert tasks[0]["subject"] == "Test Task"
         assert tasks[0]["id"] == 789
-        
-        # Verify the correct project filter was used
-        mock_client.api.tasks.list.assert_called_once_with(project=123)
+
+        # Verify the correct API call was made (uses get instead of tasks.list due to bug workaround)
+        mock_client.api.get.assert_called_once_with("/tasks", params={"project": 123})
