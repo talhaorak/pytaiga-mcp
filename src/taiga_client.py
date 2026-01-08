@@ -1,15 +1,19 @@
 # taiga_client.py
-from typing import Optional
 import logging
-# Replace python-taiga import
-# from taiga import TaigaAPI
-# from taiga.exceptions import TaigaException
-from pytaigaclient import TaigaClient  # Import the new client
-# Assuming pytaigaclient also has a base exception
+from typing import Any, Dict, List, Optional
+
+from pytaigaclient import TaigaClient
 from pytaigaclient.exceptions import TaigaException
 
-# Ensure logger is named correctly for hierarchy
 logger = logging.getLogger(__name__)
+
+# Resources that use the `project=X` keyword argument pattern
+_PROJECT_KWARG_RESOURCES = {"user_stories", "milestones"}
+
+# Resources that require raw API calls due to pytaigaclient bugs
+_RAW_API_RESOURCES = {"tasks"}
+
+# All other resources use query_params={"project": X} pattern
 
 
 class TaigaClientWrapper:
@@ -71,10 +75,53 @@ class TaigaClientWrapper:
         if not self.is_authenticated:
             logger.error(
                 "Action required authentication, but client is not logged in.")
-            # Use a standard exception type that FastMCP might handle better,
-            # or a custom one if needed. PermissionError fits well.
             raise PermissionError(
                 "Client not authenticated. Please login first.")
 
-# No changes needed to _ensure_authenticated or is_authenticated property logic,
-# just the types and method calls within login.
+    def list_resources(
+        self,
+        resource_type: str,
+        project_id: Optional[int] = None,
+        **filters
+    ) -> List[Dict[str, Any]]:
+        """
+        Unified interface for listing resources, hiding pytaigaclient inconsistencies.
+
+        Args:
+            resource_type: The type of resource (e.g., 'user_stories', 'tasks', 'issues')
+            project_id: The project ID to filter by (required for most resources)
+            **filters: Additional filters to apply
+
+        Returns:
+            List of resource dictionaries
+
+        Note:
+            pytaigaclient has inconsistent APIs:
+            - user_stories, milestones use: list(project=X, **filters)
+            - tasks use raw API due to bug: api.get("/tasks", params={...})
+            - issues, epics, etc use: list(query_params={...})
+        """
+        self._ensure_authenticated()
+
+        if resource_type in _RAW_API_RESOURCES:
+            # Workaround: pytaigaclient Tasks.list passes query_params but
+            # TaigaClient.get expects params - use raw API call
+            # See: https://github.com/talhaorak/pyTaigaClient/issues/XXX
+            params = {"project": project_id, **filters} if project_id else filters
+            endpoint = f"/{resource_type}"
+            return self.api.get(endpoint, params=params)
+
+        resource = getattr(self.api, resource_type, None)
+        if resource is None:
+            raise ValueError(f"Unknown resource type: {resource_type}")
+
+        if resource_type in _PROJECT_KWARG_RESOURCES:
+            # These resources accept project as a keyword argument
+            if project_id:
+                return resource.list(project=project_id, **filters)
+            else:
+                return resource.list(**filters)
+        else:
+            # Default pattern: use query_params dict
+            query = {"project": project_id, **filters} if project_id else filters
+            return resource.list(query_params=query)
