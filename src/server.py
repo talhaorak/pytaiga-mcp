@@ -44,6 +44,83 @@ def _parse_mcp_kwargs(kwargs: dict) -> dict:
     return kwargs
 
 
+# --- Kwargs Validation ---
+# Allowed kwargs per resource type for security and validation
+# Based on Taiga API fields: https://docs.taiga.io/api.html
+ALLOWED_KWARGS: Dict[str, set] = {
+    "project": {
+        "name", "is_private", "is_featured", "description", "tags", "total_story_points",
+        "total_milestones", "is_looking_for_people", "looking_for_people_note",
+        "is_epics_activated", "is_backlog_activated", "is_kanban_activated",
+        "is_wiki_activated", "is_issues_activated", "videoconferences",
+        "videoconferences_extra_data", "creation_template", "is_contact_activated",
+    },
+    "user_story": {
+        "description", "status", "is_closed", "points", "milestone", "tags",
+        "assigned_to", "assigned_users", "watchers", "client_requirement",
+        "team_requirement", "is_blocked", "blocked_note", "backlog_order",
+        "sprint_order", "kanban_order", "due_date", "due_date_reason",
+    },
+    "task": {
+        "description", "status", "milestone", "user_story", "assigned_to",
+        "watchers", "is_iocaine", "tags", "is_blocked", "blocked_note",
+        "due_date", "due_date_reason", "taskboard_order",
+    },
+    "issue": {
+        "description", "status", "priority", "severity", "type", "milestone",
+        "assigned_to", "watchers", "tags", "is_blocked", "blocked_note",
+        "due_date", "due_date_reason",
+    },
+    "epic": {
+        "description", "status", "assigned_to", "watchers", "tags", "color",
+        "client_requirement", "team_requirement", "epics_order",
+    },
+    "milestone": {
+        "name", "estimated_start", "estimated_finish", "disponibility",
+        "slug", "order", "watchers",
+    },
+}
+
+
+def _validate_kwargs(resource_type: str, kwargs: dict, strict: bool = False) -> dict:
+    """Validate kwargs against allowed fields for a resource type.
+
+    Args:
+        resource_type: The type of resource (e.g., 'project', 'user_story')
+        kwargs: The kwargs dict to validate
+        strict: If True, raise ValueError on unexpected kwargs. If False, log and strip.
+
+    Returns:
+        Validated kwargs dict with only allowed fields
+
+    Raises:
+        ValueError: If strict=True and unexpected kwargs are found
+    """
+    if not kwargs:
+        return {}
+
+    allowed = ALLOWED_KWARGS.get(resource_type)
+    if allowed is None:
+        # Unknown resource type - pass through but log warning
+        logger.warning(f"No kwargs allowlist defined for resource type '{resource_type}'")
+        return kwargs
+
+    unexpected = set(kwargs.keys()) - allowed
+    if unexpected:
+        if strict:
+            raise ValueError(
+                f"Unexpected kwargs for {resource_type}: {unexpected}. "
+                f"Allowed: {allowed}"
+            )
+        else:
+            logger.warning(
+                f"Stripping unexpected kwargs for {resource_type}: {unexpected}"
+            )
+            return {k: v for k, v in kwargs.items() if k in allowed}
+
+    return kwargs
+
+
 # --- Manual Session Management ---
 # Store active sessions: session_id -> TaigaClientWrapper instance
 active_sessions: Dict[str, TaigaClientWrapper] = {}
@@ -309,7 +386,7 @@ def create_project(name: str, description: str, session_id: Optional[str] = None
     logger.info(
         f"Executing create_project '{name}' for session {actual_session_id[:8]} with data: {kwargs}")
     taiga_client_wrapper = _get_authenticated_client(actual_session_id)
-    kwargs = _parse_mcp_kwargs(kwargs)
+    kwargs = _validate_kwargs("project", _parse_mcp_kwargs(kwargs))
     if not name or not description:
         raise ValueError("Project name and description are required.")
 
@@ -327,8 +404,7 @@ def update_project(project_id: int, session_id: Optional[str] = None, **kwargs) 
     logger.info(
         f"Executing update_project ID {project_id} for session {actual_session_id[:8]} with data: {kwargs}")
     taiga_client_wrapper = _get_authenticated_client(actual_session_id)
-    # Parse kwargs in case they come as a JSON string from MCP
-    kwargs = _parse_mcp_kwargs(kwargs)
+    kwargs = _validate_kwargs("project", _parse_mcp_kwargs(kwargs))
     try:
         # Use pytaigaclient update pattern: client.resource.update(id=..., data=...)
         if not kwargs:
@@ -405,7 +481,7 @@ def create_user_story(project_id: int, subject: str, session_id: Optional[str] =
     logger.info(
         f"Executing create_user_story '{subject}' in project {project_id}, session {actual_session_id[:8]}...")
     taiga_client_wrapper = _get_authenticated_client(actual_session_id)
-    kwargs = _parse_mcp_kwargs(kwargs)
+    kwargs = _validate_kwargs("user_story", _parse_mcp_kwargs(kwargs))
     if not subject:
         raise ValueError("User story subject cannot be empty.")
 
@@ -438,8 +514,7 @@ def update_user_story(user_story_id: int, session_id: Optional[str] = None, **kw
     logger.info(
         f"Executing update_user_story ID {user_story_id} for session {actual_session_id[:8]} with data: {kwargs}")
     taiga_client_wrapper = _get_authenticated_client(actual_session_id)
-    # Parse kwargs in case they come as a JSON string from MCP
-    kwargs = _parse_mcp_kwargs(kwargs)
+    kwargs = _validate_kwargs("user_story", _parse_mcp_kwargs(kwargs))
     try:
         if not kwargs:
              logger.info(f"No fields provided for update on user story {user_story_id}")
@@ -552,7 +627,7 @@ def create_task(project_id: int, subject: str, session_id: Optional[str] = None,
     logger.info(
         f"Executing create_task '{subject}' in project {project_id}, session {actual_session_id[:8]}...")
     taiga_client_wrapper = _get_authenticated_client(actual_session_id)
-    kwargs = _parse_mcp_kwargs(kwargs)
+    kwargs = _validate_kwargs("task", _parse_mcp_kwargs(kwargs))
     if not subject:
         raise ValueError("Task subject cannot be empty.")
 
@@ -585,8 +660,7 @@ def update_task(task_id: int, session_id: Optional[str] = None, **kwargs) -> Dic
     logger.info(
         f"Executing update_task ID {task_id} for session {actual_session_id[:8]} with data: {kwargs}")
     taiga_client_wrapper = _get_authenticated_client(actual_session_id)
-    # Parse kwargs in case they come as a JSON string from MCP
-    kwargs = _parse_mcp_kwargs(kwargs)
+    kwargs = _validate_kwargs("task", _parse_mcp_kwargs(kwargs))
     try:
         # Use pytaigaclient edit pattern for partial updates
         if not kwargs:
@@ -683,7 +757,7 @@ def create_issue(project_id: int, subject: str, priority_id: int, status_id: int
     logger.info(
         f"Executing create_issue '{subject}' in project {project_id}, session {actual_session_id[:8]}...")
     taiga_client_wrapper = _get_authenticated_client(actual_session_id)
-    kwargs = _parse_mcp_kwargs(kwargs)
+    kwargs = _validate_kwargs("issue", _parse_mcp_kwargs(kwargs))
     if not subject:
         raise ValueError("Issue subject cannot be empty.")
 
@@ -724,8 +798,7 @@ def update_issue(issue_id: int, session_id: Optional[str] = None, **kwargs) -> D
     logger.info(
         f"Executing update_issue ID {issue_id} for session {actual_session_id[:8]} with data: {kwargs}")
     taiga_client_wrapper = _get_authenticated_client(actual_session_id)
-    # Parse kwargs in case they come as a JSON string from MCP
-    kwargs = _parse_mcp_kwargs(kwargs)
+    kwargs = _validate_kwargs("issue", _parse_mcp_kwargs(kwargs))
     try:
         # Use pytaigaclient edit pattern for partial updates
         if not kwargs:
@@ -882,7 +955,7 @@ def create_epic(project_id: int, subject: str, session_id: Optional[str] = None,
     logger.info(
         f"Executing create_epic '{subject}' in project {project_id}, session {actual_session_id[:8]}...")
     taiga_client_wrapper = _get_authenticated_client(actual_session_id)
-    kwargs = _parse_mcp_kwargs(kwargs)
+    kwargs = _validate_kwargs("epic", _parse_mcp_kwargs(kwargs))
     if not subject:
         raise ValueError("Epic subject cannot be empty.")
 
@@ -915,10 +988,8 @@ def update_epic(epic_id: int, session_id: Optional[str] = None, **kwargs) -> Dic
     logger.info(
         f"Executing update_epic ID {epic_id} for session {actual_session_id[:8]} with data: {kwargs}")
     taiga_client_wrapper = _get_authenticated_client(actual_session_id)
-    # Parse kwargs in case they come as a JSON string from MCP
-    kwargs = _parse_mcp_kwargs(kwargs)
+    kwargs = _validate_kwargs("epic", _parse_mcp_kwargs(kwargs))
     try:
-        # Use pytaigaclient edit pattern for partial updates
         if not kwargs:
              logger.info(f"No fields provided for update on epic {epic_id}")
              return taiga_client_wrapper.api.epics.get(epic_id)
@@ -1046,10 +1117,8 @@ def update_milestone(milestone_id: int, session_id: Optional[str] = None, **kwar
     logger.info(
         f"Executing update_milestone ID {milestone_id} for session {actual_session_id[:8]} with data: {kwargs}")
     taiga_client_wrapper = _get_authenticated_client(actual_session_id)
-    # Parse kwargs in case they come as a JSON string from MCP
-    kwargs = _parse_mcp_kwargs(kwargs)
+    kwargs = _validate_kwargs("milestone", _parse_mcp_kwargs(kwargs))
     try:
-        # Use pytaigaclient edit pattern for partial updates
         if not kwargs:
              logger.info(f"No fields provided for update on milestone {milestone_id}")
              return taiga_client_wrapper.api.milestones.get(milestone_id)
