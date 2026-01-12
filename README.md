@@ -9,6 +9,7 @@
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
+[![CI](https://github.com/talhaorak/pytaiga-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/talhaorak/pytaiga-mcp/actions/workflows/ci.yml)
 
 ## Overview
 
@@ -35,6 +36,32 @@ The bridge supports the following Taiga resources with complete CRUD operations:
 - **Tasks**: Track smaller units of work within user stories
 - **Issues**: Manage bugs, questions, and enhancement requests
 - **Sprints (Milestones)**: Plan and track work in time-boxed intervals
+
+### Security & Configuration
+
+- **Secure Credentials**: Environment variable authentication with credential protection - passwords never appear in logs or error messages
+- **Auto-Authentication**: Configure `TAIGA_USERNAME` and `TAIGA_PASSWORD` environment variables for seamless startup without manual login
+- **Input Validation**: Allowlist-based parameter validation prevents unexpected data from reaching the Taiga API
+
+### Response Filtering
+
+All tools support a `verbosity` parameter to control response size, reducing AI context usage:
+
+| Level | Description | Use Case |
+|-------|-------------|----------|
+| `minimal` | Core fields only (id, ref, subject, status, project) | Listing many items |
+| `standard` | Common fields including version for updates (default) | Normal operations |
+| `full` | Complete API response | Debugging, full details |
+
+Example:
+```python
+# Get minimal response for efficient context usage
+stories = client.call_tool("list_user_stories", {
+    "project_id": 123,
+    "verbosity": "minimal"
+})
+# Returns: [{"id": 1, "ref": 42, "subject": "...", "status": 1, "project": 123}, ...]
+```
 
 ## Installation
 
@@ -83,28 +110,30 @@ The bridge can be configured through environment variables or a `.env` file:
 | Environment Variable | Description | Default |
 | --- | --- | --- |
 | `TAIGA_API_URL` | Base URL for the Taiga API | http://localhost:9000 |
-| `SESSION_EXPIRY` | Session expiration time in seconds | 28800 (8 hours) |
+| `TAIGA_USERNAME` | Taiga username for auto-authentication | (none) |
+| `TAIGA_PASSWORD` | Taiga password for auto-authentication | (none) |
 | `TAIGA_TRANSPORT` | Transport mode (stdio or sse) | stdio |
-| `REQUEST_TIMEOUT` | API request timeout in seconds | 30 |
-| `MAX_CONNECTIONS` | Maximum number of HTTP connections | 10 |
-| `MAX_KEEPALIVE_CONNECTIONS` | Max keepalive connections | 5 |
-| `RATE_LIMIT_REQUESTS` | Max requests per minute | 100 |
 | `LOG_LEVEL` | Logging level | INFO |
-| `LOG_FILE` | Path to log file | taiga_mcp.log |
 
 Create a `.env` file in the project root to set these values:
 
 ```
 TAIGA_API_URL=https://api.taiga.io/api/v1/
-TAIGA_TRANSPORT=sse
-LOG_LEVEL=DEBUG
+TAIGA_USERNAME=your_username
+TAIGA_PASSWORD=your_password
+TAIGA_TRANSPORT=stdio
+LOG_LEVEL=INFO
 ```
+
+**Security Note**: Credentials are protected and will never appear in logs, error messages, or stack traces. When `TAIGA_USERNAME` and `TAIGA_PASSWORD` are configured, the server auto-authenticates on startup - no manual login required.
 
 ## Usage
 
 ### With stdio mode
 
-Paste the following json in your Claude App's or Cursor's mcp settings section:
+Paste the following json in your Claude App's or Cursor's mcp settings section.
+
+**Recommended**: Set credentials via environment variables in your shell profile rather than in config files to avoid exposing them in plaintext.
 
 ```json
 {
@@ -163,9 +192,25 @@ You can set the transport mode in several ways:
 
 ### Authentication Flow
 
-This MCP bridge uses a session-based authentication model:
+#### Auto-Authentication (Recommended)
 
-1. **Login**: Clients must first authenticate using the `login` tool:
+If `TAIGA_USERNAME` and `TAIGA_PASSWORD` environment variables are set, the server automatically authenticates on startup. You can omit `session_id` from tool calls to use the default session:
+
+```python
+# No login needed - uses auto-authenticated default session
+projects = client.call_tool("list_projects", {})
+stories = client.call_tool("list_user_stories", {"project_id": 123})
+new_story = client.call_tool("create_user_story", {
+    "project_id": 123,
+    "subject": "New feature request"
+})
+```
+
+#### Manual Session Management
+
+For scenarios requiring multiple sessions or explicit control, use the session-based model:
+
+1. **Login**: Authenticate using the `login` tool:
    ```python
    session = client.call_tool("login", {
        "username": "your_taiga_username",
@@ -259,13 +304,11 @@ client.call_tool("logout", {"session_id": session_id})
 pyTaigaMCP/
 ├── src/
 │   ├── server.py          # MCP server implementation with tools
-│   ├── taiga_client.py    # Taiga API client with all CRUD operations
-│   ├── tools.py           # MCP tools definitions
+│   ├── taiga_client.py    # Taiga API client wrapper
 │   └── config.py          # Configuration settings with Pydantic
 ├── tests/
-│   ├── conftest.py        # Shared pytest fixtures
-│   ├── unit/              # Unit tests
-│   └── integration/       # Integration tests
+│   ├── test_server.py     # Unit tests
+│   └── test_integration.py # Integration tests
 ├── pyproject.toml         # Project configuration and dependencies
 ├── install.sh             # Installation script
 ├── run.sh                 # Server execution script
@@ -280,17 +323,7 @@ Run tests with pytest:
 # Run all tests
 pytest
 
-# Run only unit tests
-pytest tests/unit/
-
-# Run only integration tests
-pytest tests/integration/
-
-# Run tests with specific markers
-pytest -m "auth"  # Authentication tests
-pytest -m "core"  # Core functionality tests
-
-# Run tests with coverage reporting
+# Run with coverage reporting
 pytest --cov=src
 ```
 
@@ -321,14 +354,14 @@ All API operations return standardized error responses in the following format:
 }
 ```
 
-## Performance Considerations
+## Planned Features
 
-The bridge implements several performance optimizations:
+The following features are planned for future releases:
 
-1. **Connection Pooling**: Reuses HTTP connections for better performance
-2. **Rate Limiting**: Prevents overloading the Taiga API
-3. **Retry Mechanism**: Automatically retries failed requests with exponential backoff
-4. **Session Cleanup**: Regularly cleans up expired sessions to free resources
+- Session expiration and automatic cleanup
+- Rate limiting for API calls
+- Retry mechanism with exponential backoff
+- Connection pooling
 
 ## Contributing
 
