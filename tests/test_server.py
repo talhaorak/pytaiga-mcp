@@ -67,8 +67,8 @@ class TestTaigaTools:
         # Setup update return
         mock_client.api.projects.update.return_value = {"id": 123, "name": "New Name", "version": 2}
 
-        # Update the project name - note: project_id first, then session_id
-        result = src.server.update_project(123, session_id, name="New Name")
+        # Update the project name - kwargs as JSON string, then session_id
+        result = src.server.update_project(123, '{"name": "New Name"}', session_id)
 
         # Verify the update was called with correct parameters
         mock_client.api.projects.update.assert_called_once_with(
@@ -85,8 +85,8 @@ class TestTaigaTools:
         # Setup list user stories return - return actual dictionaries
         mock_client.api.user_stories.list.return_value = [{"id": 456, "subject": "Test User Story"}]
 
-        # List user stories and verify - note: project_id first, then session_id
-        stories = src.server.list_user_stories(123, session_id)
+        # List user stories and verify - filters as JSON string (empty), then session_id
+        stories = src.server.list_user_stories(123, "{}", session_id)
         assert len(stories) == 1
         assert stories[0]["subject"] == "Test User Story"
         assert stories[0]["id"] == 456
@@ -101,8 +101,8 @@ class TestTaigaTools:
         # Setup create user story return - return actual dictionary
         mock_client.api.user_stories.create.return_value = {"id": 456, "subject": "New Story"}
 
-        # Create user story and verify - note: project_id first, subject second, then session_id
-        story = src.server.create_user_story(123, "New Story", session_id, description="Test description")
+        # Create user story and verify - kwargs as JSON string, then session_id
+        story = src.server.create_user_story(123, "New Story", '{"description": "Test description"}', session_id)
         assert story["subject"] == "New Story"
         assert story["id"] == 456
 
@@ -117,11 +117,95 @@ class TestTaigaTools:
         # due to a pytaigaclient bug workaround
         mock_client.api.get.return_value = [{"id": 789, "subject": "Test Task"}]
 
-        # List tasks and verify - note: project_id first, then session_id
-        tasks = src.server.list_tasks(123, session_id)
+        # List tasks and verify - filters as JSON string (empty), then session_id
+        tasks = src.server.list_tasks(123, "{}", session_id)
         assert len(tasks) == 1
         assert tasks[0]["subject"] == "Test Task"
         assert tasks[0]["id"] == 789
 
         # Verify the correct API call was made (uses get instead of tasks.list due to bug workaround)
         mock_client.api.get.assert_called_once_with("/tasks", params={"project": 123})
+
+
+class TestResponseFiltering:
+    """Tests for the response filtering functionality."""
+
+    def test_filter_standard_always_includes_version(self):
+        """version is required for updates in standard level."""
+        for resource_type, levels in src.server.RESPONSE_FIELDS.items():
+            if resource_type != "member":  # member doesn't have version
+                assert "version" in levels["standard"], f"{resource_type} missing version in standard"
+
+    def test_filter_minimal_includes_id(self):
+        """All minimal levels must include id."""
+        for resource_type, levels in src.server.RESPONSE_FIELDS.items():
+            assert "id" in levels["minimal"], f"{resource_type} missing id in minimal"
+
+    def test_filter_minimal_includes_project_where_applicable(self):
+        """Resources with project association must include project in minimal."""
+        project_resources = ["user_story", "task", "issue", "epic", "milestone", "wiki_page"]
+        for resource_type in project_resources:
+            assert "project" in src.server.RESPONSE_FIELDS[resource_type]["minimal"], \
+                f"{resource_type} missing project in minimal"
+
+    def test_filter_response_handles_none(self):
+        """_filter_response should return None when given None."""
+        assert src.server._filter_response(None, "user_story") is None
+
+    def test_filter_response_handles_empty_list(self):
+        """_filter_response should return empty list when given empty list."""
+        assert src.server._filter_response([], "user_story") == []
+
+    def test_filter_response_unknown_type_returns_full(self):
+        """Unknown resource types should return full response."""
+        data = {"id": 1, "extra": "field"}
+        assert src.server._filter_response(data, "unknown_type") == data
+
+    def test_filter_response_full_verbosity_returns_all(self):
+        """Full verbosity should return all fields."""
+        data = {"id": 1, "subject": "Test", "version": 1, "watchers": [1, 2], "extra_field": "value"}
+        result = src.server._filter_response(data, "user_story", verbosity="full")
+        assert result == data
+
+    def test_filter_response_standard_filters_fields(self):
+        """Standard verbosity should filter to defined fields."""
+        data = {
+            "id": 1, "ref": 123, "subject": "Test", "description": "Desc",
+            "status": 1, "version": 2,
+            "watchers": [1, 2], "extra_internal_field": "should_be_filtered"
+        }
+        result = src.server._filter_response(data, "user_story", verbosity="standard")
+        assert "id" in result
+        assert "ref" in result
+        assert "subject" in result
+        assert "version" in result
+        assert "watchers" not in result
+        assert "extra_internal_field" not in result
+
+    def test_filter_response_minimal_filters_to_core(self):
+        """Minimal verbosity should filter to core identification fields."""
+        data = {
+            "id": 1, "ref": 123, "subject": "Test", "status": 1, "project": 10,
+            "description": "Long description", "version": 2, "watchers": [1, 2]
+        }
+        result = src.server._filter_response(data, "user_story", verbosity="minimal")
+        assert result == {"id": 1, "ref": 123, "subject": "Test", "status": 1, "project": 10}
+
+    def test_filter_response_list_filters_each_item(self):
+        """_filter_response should filter each item in a list."""
+        data = [
+            {"id": 1, "subject": "Story 1", "watchers": [1]},
+            {"id": 2, "subject": "Story 2", "watchers": [2]}
+        ]
+        result = src.server._filter_response(data, "user_story", verbosity="minimal")
+        assert len(result) == 2
+        assert "watchers" not in result[0]
+        assert "watchers" not in result[1]
+
+    def test_filter_response_invalid_verbosity_falls_back_to_standard(self):
+        """Typos in verbosity should warn and use standard."""
+        data = {"id": 1, "subject": "Test", "version": 1, "watchers": [1, 2]}
+        result = src.server._filter_response(data, "user_story", verbosity="stanard")  # typo
+        assert "id" in result
+        assert "version" in result
+        assert "watchers" not in result
