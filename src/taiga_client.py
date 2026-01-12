@@ -73,16 +73,11 @@ class TaigaClientWrapper:
     def _ensure_authenticated(self):
         """Internal helper to check authentication before API calls."""
         if not self.is_authenticated:
-            logger.error(
-                "Action required authentication, but client is not logged in.")
-            raise PermissionError(
-                "Client not authenticated. Please login first.")
+            logger.error("Action required authentication, but client is not logged in.")
+            raise PermissionError("Client not authenticated. Please login first.")
 
     def list_resources(
-        self,
-        resource_type: str,
-        project_id: Optional[int] = None,
-        **filters
+        self, resource_type: str, project_id: Optional[int] = None, **filters
     ) -> List[Dict[str, Any]]:
         """
         Unified interface for listing resources, hiding pytaigaclient inconsistencies.

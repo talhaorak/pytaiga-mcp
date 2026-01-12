@@ -71,7 +71,9 @@ def mask_credential(value: str, visible_chars: int = 2) -> str:
         return "<empty>"
     if len(value) <= visible_chars * 2:
         return "*" * len(value)
-    return f"{value[:visible_chars]}{'*' * (len(value) - visible_chars * 2)}{value[-visible_chars:]}"
+    return (
+        f"{value[:visible_chars]}{'*' * (len(value) - visible_chars * 2)}{value[-visible_chars:]}"
+    )
 
 
 # Global settings instance

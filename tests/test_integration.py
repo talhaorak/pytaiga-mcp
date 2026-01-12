@@ -19,6 +19,7 @@ TEST_HOST = os.environ.get("TAIGA_TEST_HOST", "http://localhost:9000")
 TEST_USERNAME = os.environ.get("TAIGA_TEST_USERNAME", "test")
 TEST_PASSWORD = os.environ.get("TAIGA_TEST_PASSWORD", "test")
 
+
 @pytest.mark.integration  # Mark these to run separately
 class TestTaigaIntegration:
     @pytest.fixture
@@ -59,10 +60,10 @@ class TestTaigaIntegration:
         """Test user story creation and listing with real API calls"""
         # Get the first project for testing
         projects = list_projects(session_id)
-        print(f"DEBUG: Found {len(projects)} projects") # DEBUG
+        print(f"DEBUG: Found {len(projects)} projects")  # DEBUG
         assert len(projects) > 0, "No projects found in your Taiga account"
         project_id = projects[0]["id"]
-        print(f"DEBUG: Using project ID {project_id}") # DEBUG
+        print(f"DEBUG: Using project ID {project_id}")  # DEBUG
 
         # Create a user story with unique subject
         subject = f"Test Story {uuid.uuid4()}"
@@ -70,7 +71,7 @@ class TestTaigaIntegration:
 
         # Create the user story - note: project_id first, subject second, then session_id
         story = create_user_story(project_id, subject, session_id, description=description)
-        print(f"DEBUG: Created story: {story['id']} - {story['subject']}") # DEBUG
+        print(f"DEBUG: Created story: {story['id']} - {story['subject']}")  # DEBUG
         story_id = story["id"]
 
         try:

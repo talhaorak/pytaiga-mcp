@@ -12,6 +12,7 @@ TEST_HOST = "https://your-test-taiga-instance.com"
 TEST_USERNAME = "test_user"
 TEST_PASSWORD = "test_password"
 
+
 class TestTaigaTools:
     @pytest.fixture
     def session_setup(self):
@@ -30,7 +31,7 @@ class TestTaigaTools:
 
     def test_login(self):
         """Test the login functionality"""
-        with patch.object(TaigaClientWrapper, 'login', return_value=True):
+        with patch.object(TaigaClientWrapper, "login", return_value=True):
             # Clear any existing sessions
             src.server.active_sessions.clear()
 
@@ -72,9 +73,7 @@ class TestTaigaTools:
 
         # Verify the update was called with correct parameters
         mock_client.api.projects.update.assert_called_once_with(
-            project_id=123,
-            version=1,
-            project_data={"name": "New Name"}
+            project_id=123, version=1, project_data={"name": "New Name"}
         )
         assert result["name"] == "New Name"
 
@@ -102,12 +101,16 @@ class TestTaigaTools:
         mock_client.api.user_stories.create.return_value = {"id": 456, "subject": "New Story"}
 
         # Create user story and verify - kwargs as JSON string, then session_id
-        story = src.server.create_user_story(123, "New Story", '{"description": "Test description"}', session_id)
+        story = src.server.create_user_story(
+            123, "New Story", '{"description": "Test description"}', session_id
+        )
         assert story["subject"] == "New Story"
         assert story["id"] == 456
 
         # Verify the create was called with correct parameters
-        mock_client.api.user_stories.create.assert_called_once_with(project=123, subject="New Story", description="Test description")
+        mock_client.api.user_stories.create.assert_called_once_with(
+            project=123, subject="New Story", description="Test description"
+        )
 
     def test_list_tasks(self, session_setup):
         """Test list_tasks functionality"""
@@ -134,7 +137,9 @@ class TestResponseFiltering:
         """version is required for updates in standard level."""
         for resource_type, levels in src.server.RESPONSE_FIELDS.items():
             if resource_type != "member":  # member doesn't have version
-                assert "version" in levels["standard"], f"{resource_type} missing version in standard"
+                assert "version" in levels["standard"], (
+                    f"{resource_type} missing version in standard"
+                )
 
     def test_filter_minimal_includes_id(self):
         """All minimal levels must include id."""
@@ -145,8 +150,9 @@ class TestResponseFiltering:
         """Resources with project association must include project in minimal."""
         project_resources = ["user_story", "task", "issue", "epic", "milestone", "wiki_page"]
         for resource_type in project_resources:
-            assert "project" in src.server.RESPONSE_FIELDS[resource_type]["minimal"], \
+            assert "project" in src.server.RESPONSE_FIELDS[resource_type]["minimal"], (
                 f"{resource_type} missing project in minimal"
+            )
 
     def test_filter_response_handles_none(self):
         """_filter_response should return None when given None."""
@@ -163,16 +169,27 @@ class TestResponseFiltering:
 
     def test_filter_response_full_verbosity_returns_all(self):
         """Full verbosity should return all fields."""
-        data = {"id": 1, "subject": "Test", "version": 1, "watchers": [1, 2], "extra_field": "value"}
+        data = {
+            "id": 1,
+            "subject": "Test",
+            "version": 1,
+            "watchers": [1, 2],
+            "extra_field": "value",
+        }
         result = src.server._filter_response(data, "user_story", verbosity="full")
         assert result == data
 
     def test_filter_response_standard_filters_fields(self):
         """Standard verbosity should filter to defined fields."""
         data = {
-            "id": 1, "ref": 123, "subject": "Test", "description": "Desc",
-            "status": 1, "version": 2,
-            "watchers": [1, 2], "extra_internal_field": "should_be_filtered"
+            "id": 1,
+            "ref": 123,
+            "subject": "Test",
+            "description": "Desc",
+            "status": 1,
+            "version": 2,
+            "watchers": [1, 2],
+            "extra_internal_field": "should_be_filtered",
         }
         result = src.server._filter_response(data, "user_story", verbosity="standard")
         assert "id" in result
@@ -185,8 +202,14 @@ class TestResponseFiltering:
     def test_filter_response_minimal_filters_to_core(self):
         """Minimal verbosity should filter to core identification fields."""
         data = {
-            "id": 1, "ref": 123, "subject": "Test", "status": 1, "project": 10,
-            "description": "Long description", "version": 2, "watchers": [1, 2]
+            "id": 1,
+            "ref": 123,
+            "subject": "Test",
+            "status": 1,
+            "project": 10,
+            "description": "Long description",
+            "version": 2,
+            "watchers": [1, 2],
         }
         result = src.server._filter_response(data, "user_story", verbosity="minimal")
         assert result == {"id": 1, "ref": 123, "subject": "Test", "status": 1, "project": 10}
@@ -195,7 +218,7 @@ class TestResponseFiltering:
         """_filter_response should filter each item in a list."""
         data = [
             {"id": 1, "subject": "Story 1", "watchers": [1]},
-            {"id": 2, "subject": "Story 2", "watchers": [2]}
+            {"id": 2, "subject": "Story 2", "watchers": [2]},
         ]
         result = src.server._filter_response(data, "user_story", verbosity="minimal")
         assert len(result) == 2
