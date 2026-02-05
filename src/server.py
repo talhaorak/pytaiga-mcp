@@ -1324,11 +1324,11 @@ def get_issue_priorities(project_id: int, session_id: Optional[str] = None) -> L
     )
     taiga_client_wrapper = _get_authenticated_client(actual_session_id)
 
+    # Note: Taiga API uses /priorities endpoint, not /issue-priorities
+    # The pytaigaclient resource mapping is incorrect, so we use direct GET
     return _execute_taiga_operation(
         "get_issue_priorities",
-        lambda: taiga_client_wrapper.api.issue_priorities.list(
-            query_params={"project": project_id}
-        ),
+        lambda: taiga_client_wrapper.api.get("/priorities", query_params={"project": project_id}),
         f"project {project_id}",
     )
 
@@ -1345,11 +1345,11 @@ def get_issue_severities(project_id: int, session_id: Optional[str] = None) -> L
     )
     taiga_client_wrapper = _get_authenticated_client(actual_session_id)
 
+    # Note: Taiga API uses /severities endpoint, not /issue-severities
+    # The pytaigaclient resource mapping is incorrect, so we use direct GET
     return _execute_taiga_operation(
         "get_issue_severities",
-        lambda: taiga_client_wrapper.api.issue_severities.list(
-            query_params={"project": project_id}
-        ),
+        lambda: taiga_client_wrapper.api.get("/severities", query_params={"project": project_id}),
         f"project {project_id}",
     )
 
