@@ -81,7 +81,7 @@ jobs:
       - name: Python Semantic Release
         id: semrel
         run: |
-          uv run semantic-release version --no-build
+          uv run semantic-release version --skip-build
           uv run semantic-release publish
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
