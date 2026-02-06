@@ -703,16 +703,21 @@ def update_project(
             result = taiga_client_wrapper.api.projects.get(project_id=project_id)
             return _filter_response(result, "project", verbosity)
 
-        # First fetch the project to get its current version
+        # Fetch current project to get version (if available)
         current_project = taiga_client_wrapper.api.projects.get(project_id=project_id)
         version = current_project.get("version")
-        if not version:
-            raise ValueError(f"Could not determine version for project {project_id}")
 
-        # The project update method requires project_id, version, and project_data
-        updated_project = taiga_client_wrapper.api.projects.update(
-            project_id=project_id, version=version, project_data=parsed_kwargs
-        )
+        if version:
+            # Use pytaigaclient update method when version is available
+            updated_project = taiga_client_wrapper.api.projects.update(
+                project_id=project_id, version=version, project_data=parsed_kwargs
+            )
+        else:
+            # Taiga projects don't use optimistic concurrency (no version field)
+            # Use direct PATCH call as workaround
+            updated_project = taiga_client_wrapper.api.patch(
+                f"/projects/{project_id}", json=parsed_kwargs
+            )
         logger.info(f"Project {project_id} update request sent.")
         # Return the result from the update call
         return _filter_response(updated_project, "project", verbosity)
@@ -1324,11 +1329,11 @@ def get_issue_priorities(project_id: int, session_id: Optional[str] = None) -> L
     )
     taiga_client_wrapper = _get_authenticated_client(actual_session_id)
 
+    # Note: Taiga API uses /priorities endpoint, not /issue-priorities
+    # The pytaigaclient resource mapping is incorrect, so we use direct GET
     return _execute_taiga_operation(
         "get_issue_priorities",
-        lambda: taiga_client_wrapper.api.issue_priorities.list(
-            query_params={"project": project_id}
-        ),
+        lambda: taiga_client_wrapper.api.get("/priorities", params={"project": project_id}),
         f"project {project_id}",
     )
 
@@ -1345,11 +1350,11 @@ def get_issue_severities(project_id: int, session_id: Optional[str] = None) -> L
     )
     taiga_client_wrapper = _get_authenticated_client(actual_session_id)
 
+    # Note: Taiga API uses /severities endpoint, not /issue-severities
+    # The pytaigaclient resource mapping is incorrect, so we use direct GET
     return _execute_taiga_operation(
         "get_issue_severities",
-        lambda: taiga_client_wrapper.api.issue_severities.list(
-            query_params={"project": project_id}
-        ),
+        lambda: taiga_client_wrapper.api.get("/severities", params={"project": project_id}),
         f"project {project_id}",
     )
 
