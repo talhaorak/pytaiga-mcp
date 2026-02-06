@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/talhaorak-pytaiga-mcp-badge.png)](https://mseep.ai/app/talhaorak-pytaiga-mcp)
+
 <p align="center">
 <picture>
   <img src="https://taiga.io/media/images/favicon.width-44.png">
