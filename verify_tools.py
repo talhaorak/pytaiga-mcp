@@ -117,7 +117,7 @@ def run_verification():
         assert task_get["subject"] == task_subject
         print("✅ Retrieved Task")
 
-        update_task(task["id"], kwargs='{"subject": "Updated Task Name"}', session_id=session_id)
+        update_task(task["id"], kwargs={"subject": "Updated Task Name"}, session_id=session_id)
         print("✅ Updated Task")
 
         delete_task(task["id"], session_id=session_id)
@@ -136,7 +136,7 @@ def run_verification():
         assert epic_get["subject"] == epic_subject
         print("✅ Retrieved Epic")
 
-        update_epic(epic["id"], kwargs='{"subject": "Updated Epic Name"}', session_id=session_id)
+        update_epic(epic["id"], kwargs={"subject": "Updated Epic Name"}, session_id=session_id)
         print("✅ Updated Epic")
 
         delete_epic(epic["id"], session_id=session_id)
