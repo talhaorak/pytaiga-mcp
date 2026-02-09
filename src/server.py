@@ -595,7 +595,6 @@ def list_projects(
     actual_session_id = _get_session_id(session_id)
     logger.info(f"Executing list_projects for session {actual_session_id[:8]}...")
     taiga_client_wrapper = _get_authenticated_client(actual_session_id)
-
     result = _execute_taiga_operation(
         "list_projects", lambda: taiga_client_wrapper.api.projects.list()
     )
