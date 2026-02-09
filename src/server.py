@@ -72,6 +72,7 @@ ALLOWED_KWARGS: Dict[str, set] = {
         "is_contact_activated",
     },
     "user_story": {
+        "subject",
         "description",
         "status",
         "is_closed",
@@ -90,8 +91,10 @@ ALLOWED_KWARGS: Dict[str, set] = {
         "kanban_order",
         "due_date",
         "due_date_reason",
+        "epics",
     },
     "task": {
+        "subject",
         "description",
         "status",
         "milestone",
@@ -107,6 +110,7 @@ ALLOWED_KWARGS: Dict[str, set] = {
         "taskboard_order",
     },
     "issue": {
+        "subject",
         "description",
         "status",
         "priority",
@@ -122,6 +126,7 @@ ALLOWED_KWARGS: Dict[str, set] = {
         "due_date_reason",
     },
     "epic": {
+        "subject",
         "description",
         "status",
         "assigned_to",
@@ -140,6 +145,10 @@ ALLOWED_KWARGS: Dict[str, set] = {
         "slug",
         "order",
         "watchers",
+    },
+    "wiki_page": {
+        "slug",
+        "content",
     },
 }
 
@@ -588,7 +597,7 @@ def list_projects(
     taiga_client_wrapper = _get_authenticated_client(actual_session_id)
 
     result = _execute_taiga_operation(
-        "list_projects", lambda: taiga_client_wrapper.api.projects.list()
+        "list_projects", lambda: taiga_client_wrapper.get_api().projects.list()
     )
     return _filter_response(result, "project", verbosity)
 
@@ -621,7 +630,7 @@ def get_project(
 
     result = _execute_taiga_operation(
         "get_project",
-        lambda: taiga_client_wrapper.api.projects.get(project_id),
+        lambda: taiga_client_wrapper.get_api().projects.get(project_id),
         f"project {project_id}",
     )
     return _filter_response(result, "project", verbosity)
@@ -641,7 +650,7 @@ def get_project_by_slug(
 
     result = _execute_taiga_operation(
         "get_project_by_slug",
-        lambda: taiga_client_wrapper.api.projects.get(slug=slug),
+        lambda: taiga_client_wrapper.get_api().projects.get(slug=slug),
         f"slug '{slug}'",
     )
     return _filter_response(result, "project", verbosity)
@@ -654,7 +663,7 @@ def get_project_by_slug(
 def create_project(
     name: str,
     description: str,
-    kwargs: str = "{}",
+    kwargs: Any = None,
     session_id: Optional[str] = None,
     verbosity: str = "standard",
 ) -> Dict[str, Any]:
@@ -670,7 +679,7 @@ def create_project(
 
     result = _execute_taiga_operation(
         "create_project",
-        lambda: taiga_client_wrapper.api.projects.create(
+        lambda: taiga_client_wrapper.get_api().projects.create(
             name=name, description=description, **parsed_kwargs
         ),
         f"project '{name}'",
@@ -684,7 +693,7 @@ def create_project(
 )
 def update_project(
     project_id: int,
-    kwargs: str = "{}",
+    kwargs: Any = None,
     session_id: Optional[str] = None,
     verbosity: str = "standard",
 ) -> Dict[str, Any]:
@@ -700,24 +709,23 @@ def update_project(
         if not parsed_kwargs:
             logger.info(f"No fields provided for update on project {project_id}")
             # Return current state if no updates provided
-            result = taiga_client_wrapper.api.projects.get(project_id=project_id)
+            result = taiga_client_wrapper.get_api().projects.get(project_id=project_id)
             return _filter_response(result, "project", verbosity)
 
-        # Fetch current project to get version (if available)
-        current_project = taiga_client_wrapper.api.projects.get(project_id=project_id)
+        # First fetch the project to get its current version
+        current_project = taiga_client_wrapper.get_api().projects.get(project_id=project_id)
         version = current_project.get("version")
+        if not version:
+            logger.warning(
+                f"Could not determine version for project {project_id}. Attempting update without version."
+            )
 
-        if version:
-            # Use pytaigaclient update method when version is available
-            updated_project = taiga_client_wrapper.api.projects.update(
-                project_id=project_id, version=version, project_data=parsed_kwargs
-            )
-        else:
-            # Taiga projects don't use optimistic concurrency (no version field)
-            # Use direct PATCH call as workaround
-            updated_project = taiga_client_wrapper.api.patch(
-                f"/projects/{project_id}", json=parsed_kwargs
-            )
+        # The project update method requires project_id, version, and project_data
+        # Use edit() for partial updates (PATCH) instead of update() (PUT)
+        updated_project = taiga_client_wrapper.get_api().projects.edit(
+            project_id=project_id, version=version, **parsed_kwargs
+        )
+
         logger.info(f"Project {project_id} update request sent.")
         # Return the result from the update call
         return _filter_response(updated_project, "project", verbosity)
@@ -742,7 +750,7 @@ def delete_project(project_id: int, session_id: Optional[str] = None) -> Dict[st
     taiga_client_wrapper = _get_authenticated_client(actual_session_id)
 
     def do_delete():
-        taiga_client_wrapper.api.projects.delete(project_id=project_id)
+        taiga_client_wrapper.get_api().projects.delete(project_id=project_id)
         return {"status": "deleted", "project_id": project_id}
 
     return _execute_taiga_operation("delete_project", do_delete, f"project {project_id}")
@@ -758,7 +766,7 @@ def delete_project(project_id: int, session_id: Optional[str] = None) -> Dict[st
 )
 def list_user_stories(
     project_id: int,
-    filters: str = "{}",
+    filters: Any = None,
     session_id: Optional[str] = None,
     verbosity: str = "standard",
 ) -> List[Dict[str, Any]]:
@@ -772,7 +780,9 @@ def list_user_stories(
 
     result = _execute_taiga_operation(
         "list_user_stories",
-        lambda: taiga_client_wrapper.api.user_stories.list(project=project_id, **parsed_filters),
+        lambda: taiga_client_wrapper.get_api().user_stories.list(
+            project=project_id, **parsed_filters
+        ),
         f"project {project_id}",
     )
     return _filter_response(result, "user_story", verbosity)
@@ -785,7 +795,7 @@ def list_user_stories(
 def create_user_story(
     project_id: int,
     subject: str,
-    kwargs: str = "{}",
+    kwargs: Any = None,
     session_id: Optional[str] = None,
     verbosity: str = "standard",
 ) -> Dict[str, Any]:
@@ -801,7 +811,7 @@ def create_user_story(
 
     result = _execute_taiga_operation(
         "create_user_story",
-        lambda: taiga_client_wrapper.api.user_stories.create(
+        lambda: taiga_client_wrapper.get_api().user_stories.create(
             project=project_id, subject=subject, **parsed_kwargs
         ),
         f"user story '{subject}'",
@@ -825,7 +835,7 @@ def get_user_story(
 
     result = _execute_taiga_operation(
         "get_user_story",
-        lambda: taiga_client_wrapper.api.user_stories.get(user_story_id),
+        lambda: taiga_client_wrapper.get_api().user_stories.get(user_story_id),
         f"user story {user_story_id}",
     )
     return _filter_response(result, "user_story", verbosity)
@@ -837,7 +847,7 @@ def get_user_story(
 )
 def update_user_story(
     user_story_id: int,
-    kwargs: str = "{}",
+    kwargs: Any = None,
     session_id: Optional[str] = None,
     verbosity: str = "standard",
 ) -> Dict[str, Any]:
@@ -851,17 +861,17 @@ def update_user_story(
     try:
         if not parsed_kwargs:
             logger.info(f"No fields provided for update on user story {user_story_id}")
-            result = taiga_client_wrapper.api.user_stories.get(user_story_id)
+            result = taiga_client_wrapper.get_api().user_stories.get(user_story_id)
             return _filter_response(result, "user_story", verbosity)
 
         # Get current user story data to retrieve version
-        current_story = taiga_client_wrapper.api.user_stories.get(user_story_id)
+        current_story = taiga_client_wrapper.get_api().user_stories.get(user_story_id)
         version = current_story.get("version")
         if not version:
             raise ValueError(f"Could not determine version for user story {user_story_id}")
 
         # Use edit method for partial updates with keyword arguments
-        updated_story = taiga_client_wrapper.api.user_stories.edit(
+        updated_story = taiga_client_wrapper.get_api().user_stories.edit(
             user_story_id=user_story_id, version=version, **parsed_kwargs
         )
         logger.info(f"User story {user_story_id} update request sent.")
@@ -887,7 +897,7 @@ def delete_user_story(user_story_id: int, session_id: Optional[str] = None) -> D
     taiga_client_wrapper = _get_authenticated_client(actual_session_id)
 
     def do_delete():
-        taiga_client_wrapper.api.user_stories.delete(user_story_id=user_story_id)
+        taiga_client_wrapper.get_api().user_stories.delete(user_story_id=user_story_id)
         return {"status": "deleted", "user_story_id": user_story_id}
 
     return _execute_taiga_operation("delete_user_story", do_delete, f"user story {user_story_id}")
@@ -941,7 +951,7 @@ def get_user_story_statuses(
 
     return _execute_taiga_operation(
         "get_user_story_statuses",
-        lambda: taiga_client_wrapper.api.userstory_statuses.list(
+        lambda: taiga_client_wrapper.get_api().userstory_statuses.list(
             query_params={"project": project_id}
         ),
         f"project {project_id}",
@@ -957,7 +967,7 @@ def get_user_story_statuses(
 )
 def list_tasks(
     project_id: int,
-    filters: str = "{}",
+    filters: Any = None,
     session_id: Optional[str] = None,
     verbosity: str = "standard",
 ) -> List[Dict[str, Any]]:
@@ -975,7 +985,7 @@ def list_tasks(
 
     result = _execute_taiga_operation(
         "list_tasks",
-        lambda: taiga_client_wrapper.api.get("/tasks", params=query),
+        lambda: taiga_client_wrapper.get_api().get("/tasks", params=query),
         f"project {project_id}",
     )
     return _filter_response(result, "task", verbosity)
@@ -988,7 +998,7 @@ def list_tasks(
 def create_task(
     project_id: int,
     subject: str,
-    kwargs: str = "{}",
+    kwargs: Any = None,
     session_id: Optional[str] = None,
     verbosity: str = "standard",
 ) -> Dict[str, Any]:
@@ -1004,7 +1014,7 @@ def create_task(
 
     result = _execute_taiga_operation(
         "create_task",
-        lambda: taiga_client_wrapper.api.tasks.create(
+        lambda: taiga_client_wrapper.get_api().tasks.create(
             project=project_id, subject=subject, data=parsed_kwargs if parsed_kwargs else None
         ),
         f"task '{subject}'",
@@ -1025,7 +1035,7 @@ def get_task(
     taiga_client_wrapper = _get_authenticated_client(actual_session_id)
 
     result = _execute_taiga_operation(
-        "get_task", lambda: taiga_client_wrapper.api.tasks.get(task_id), f"task {task_id}"
+        "get_task", lambda: taiga_client_wrapper.get_api().tasks.get(task_id), f"task {task_id}"
     )
     return _filter_response(result, "task", verbosity)
 
@@ -1035,7 +1045,7 @@ def get_task(
     description="Updates details of an existing task. verbosity: 'minimal', 'standard' (default), 'full'. Uses default session if session_id not provided.",
 )
 def update_task(
-    task_id: int, kwargs: str = "{}", session_id: Optional[str] = None, verbosity: str = "standard"
+    task_id: int, kwargs: Any = None, session_id: Optional[str] = None, verbosity: str = "standard"
 ) -> Dict[str, Any]:
     """Updates a task. Pass fields to update as kwargs JSON string (e.g., {"subject": "New", "status": 2})."""
     actual_session_id = _get_session_id(session_id)
@@ -1048,17 +1058,17 @@ def update_task(
         # Use pytaigaclient edit pattern for partial updates
         if not parsed_kwargs:
             logger.info(f"No fields provided for update on task {task_id}")
-            result = taiga_client_wrapper.api.tasks.get(task_id)
+            result = taiga_client_wrapper.get_api().tasks.get(task_id)
             return _filter_response(result, "task", verbosity)
 
         # Get current task data to retrieve version
-        current_task = taiga_client_wrapper.api.tasks.get(task_id)
+        current_task = taiga_client_wrapper.get_api().tasks.get(task_id)
         version = current_task.get("version")
         if not version:
             raise ValueError(f"Could not determine version for task {task_id}")
 
         # Use edit method for partial updates - pytaigaclient uses data: Dict not **kwargs
-        updated_task = taiga_client_wrapper.api.tasks.edit(
+        updated_task = taiga_client_wrapper.get_api().tasks.edit(
             task_id=task_id, version=version, data=parsed_kwargs
         )
         logger.info(f"Task {task_id} update request sent.")
@@ -1082,7 +1092,7 @@ def delete_task(task_id: int, session_id: Optional[str] = None) -> Dict[str, Any
     taiga_client_wrapper = _get_authenticated_client(actual_session_id)
 
     def do_delete():
-        taiga_client_wrapper.api.tasks.delete(task_id=task_id)
+        taiga_client_wrapper.get_api().tasks.delete(task_id=task_id)
         return {"status": "deleted", "task_id": task_id}
 
     return _execute_taiga_operation("delete_task", do_delete, f"task {task_id}")
@@ -1118,6 +1128,27 @@ def unassign_task_from_user(task_id: int, session_id: Optional[str] = None) -> D
     return update_task(task_id, json.dumps({"assigned_to": None}), actual_session_id)
 
 
+@mcp.tool(
+    "get_task_statuses",
+    description="Lists the available statuses for tasks within a specific project. Uses default session if session_id not provided.",
+)
+def get_task_statuses(project_id: int, session_id: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Retrieves the list of task statuses for a project."""
+    actual_session_id = _get_session_id(session_id)
+    logger.info(
+        f"Executing get_task_statuses for project {project_id}, session {actual_session_id[:8]}..."
+    )
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
+
+    return _execute_taiga_operation(
+        "get_task_statuses",
+        lambda: taiga_client_wrapper.get_api().task_statuses.list(
+            query_params={"project": project_id}
+        ),
+        f"project {project_id}",
+    )
+
+
 # --- Issue Tools ---
 
 
@@ -1127,7 +1158,7 @@ def unassign_task_from_user(task_id: int, session_id: Optional[str] = None) -> D
 )
 def list_issues(
     project_id: int,
-    filters: str = "{}",
+    filters: Any = None,
     session_id: Optional[str] = None,
     verbosity: str = "standard",
 ) -> List[Dict[str, Any]]:
@@ -1143,7 +1174,7 @@ def list_issues(
 
     result = _execute_taiga_operation(
         "list_issues",
-        lambda: taiga_client_wrapper.api.issues.list(query_params=query),
+        lambda: taiga_client_wrapper.get_api().issues.list(query_params=query),
         f"project {project_id}",
     )
     return _filter_response(result, "issue", verbosity)
@@ -1160,7 +1191,7 @@ def create_issue(
     status_id: int,
     severity_id: int,
     type_id: int,
-    kwargs: str = "{}",
+    kwargs: Any = None,
     session_id: Optional[str] = None,
     verbosity: str = "standard",
 ) -> Dict[str, Any]:
@@ -1184,7 +1215,7 @@ def create_issue(
 
     result = _execute_taiga_operation(
         "create_issue",
-        lambda: taiga_client_wrapper.api.issues.create(
+        lambda: taiga_client_wrapper.get_api().issues.create(
             project=project_id, subject=subject, data=issue_data
         ),
         f"issue '{subject}'",
@@ -1205,7 +1236,9 @@ def get_issue(
     taiga_client_wrapper = _get_authenticated_client(actual_session_id)
 
     result = _execute_taiga_operation(
-        "get_issue", lambda: taiga_client_wrapper.api.issues.get(issue_id), f"issue {issue_id}"
+        "get_issue",
+        lambda: taiga_client_wrapper.get_api().issues.get(issue_id),
+        f"issue {issue_id}",
     )
     return _filter_response(result, "issue", verbosity)
 
@@ -1215,7 +1248,7 @@ def get_issue(
     description="Updates details of an existing issue. verbosity: 'minimal', 'standard' (default), 'full'. Uses default session if session_id not provided.",
 )
 def update_issue(
-    issue_id: int, kwargs: str = "{}", session_id: Optional[str] = None, verbosity: str = "standard"
+    issue_id: int, kwargs: Any = None, session_id: Optional[str] = None, verbosity: str = "standard"
 ) -> Dict[str, Any]:
     """Updates an issue. Pass fields to update as kwargs JSON string (e.g., {"subject": "New", "status": 2})."""
     actual_session_id = _get_session_id(session_id)
@@ -1228,17 +1261,17 @@ def update_issue(
         # Use pytaigaclient edit pattern for partial updates
         if not parsed_kwargs:
             logger.info(f"No fields provided for update on issue {issue_id}")
-            result = taiga_client_wrapper.api.issues.get(issue_id)
+            result = taiga_client_wrapper.get_api().issues.get(issue_id)
             return _filter_response(result, "issue", verbosity)
 
         # Get current issue data to retrieve version
-        current_issue = taiga_client_wrapper.api.issues.get(issue_id)
+        current_issue = taiga_client_wrapper.get_api().issues.get(issue_id)
         version = current_issue.get("version")
         if not version:
             raise ValueError(f"Could not determine version for issue {issue_id}")
 
         # Use edit method for partial updates - pytaigaclient uses data: Dict not **kwargs
-        updated_issue = taiga_client_wrapper.api.issues.edit(
+        updated_issue = taiga_client_wrapper.get_api().issues.edit(
             issue_id=issue_id, version=version, data=parsed_kwargs
         )
         logger.info(f"Issue {issue_id} update request sent.")
@@ -1262,7 +1295,7 @@ def delete_issue(issue_id: int, session_id: Optional[str] = None) -> Dict[str, A
     taiga_client_wrapper = _get_authenticated_client(actual_session_id)
 
     def do_delete():
-        taiga_client_wrapper.api.issues.delete(issue_id=issue_id)
+        taiga_client_wrapper.get_api().issues.delete(issue_id=issue_id)
         return {"status": "deleted", "issue_id": issue_id}
 
     return _execute_taiga_operation("delete_issue", do_delete, f"issue {issue_id}")
@@ -1312,7 +1345,9 @@ def get_issue_statuses(project_id: int, session_id: Optional[str] = None) -> Lis
 
     return _execute_taiga_operation(
         "get_issue_statuses",
-        lambda: taiga_client_wrapper.api.issue_statuses.list(query_params={"project": project_id}),
+        lambda: taiga_client_wrapper.get_api().issue_statuses.list(
+            query_params={"project": project_id}
+        ),
         f"project {project_id}",
     )
 
@@ -1329,11 +1364,9 @@ def get_issue_priorities(project_id: int, session_id: Optional[str] = None) -> L
     )
     taiga_client_wrapper = _get_authenticated_client(actual_session_id)
 
-    # Note: Taiga API uses /priorities endpoint, not /issue-priorities
-    # The pytaigaclient resource mapping is incorrect, so we use direct GET
     return _execute_taiga_operation(
         "get_issue_priorities",
-        lambda: taiga_client_wrapper.api.get("/priorities", params={"project": project_id}),
+        lambda: taiga_client_wrapper.get_api().get("/priorities", params={"project": project_id}),
         f"project {project_id}",
     )
 
@@ -1350,11 +1383,9 @@ def get_issue_severities(project_id: int, session_id: Optional[str] = None) -> L
     )
     taiga_client_wrapper = _get_authenticated_client(actual_session_id)
 
-    # Note: Taiga API uses /severities endpoint, not /issue-severities
-    # The pytaigaclient resource mapping is incorrect, so we use direct GET
     return _execute_taiga_operation(
         "get_issue_severities",
-        lambda: taiga_client_wrapper.api.get("/severities", params={"project": project_id}),
+        lambda: taiga_client_wrapper.get_api().get("/severities", params={"project": project_id}),
         f"project {project_id}",
     )
 
@@ -1373,7 +1404,9 @@ def get_issue_types(project_id: int, session_id: Optional[str] = None) -> List[D
 
     return _execute_taiga_operation(
         "get_issue_types",
-        lambda: taiga_client_wrapper.api.issue_types.list(query_params={"project": project_id}),
+        lambda: taiga_client_wrapper.get_api().issue_types.list(
+            query_params={"project": project_id}
+        ),
         f"project {project_id}",
     )
 
@@ -1387,7 +1420,7 @@ def get_issue_types(project_id: int, session_id: Optional[str] = None) -> List[D
 )
 def list_epics(
     project_id: int,
-    filters: str = "{}",
+    filters: Any = None,
     session_id: Optional[str] = None,
     verbosity: str = "standard",
 ) -> List[Dict[str, Any]]:
@@ -1403,7 +1436,7 @@ def list_epics(
 
     result = _execute_taiga_operation(
         "list_epics",
-        lambda: taiga_client_wrapper.api.epics.list(query_params=query),
+        lambda: taiga_client_wrapper.get_api().epics.list(query_params=query),
         f"project {project_id}",
     )
     return _filter_response(result, "epic", verbosity)
@@ -1416,7 +1449,7 @@ def list_epics(
 def create_epic(
     project_id: int,
     subject: str,
-    kwargs: str = "{}",
+    kwargs: Any = None,
     session_id: Optional[str] = None,
     verbosity: str = "standard",
 ) -> Dict[str, Any]:
@@ -1432,7 +1465,7 @@ def create_epic(
 
     result = _execute_taiga_operation(
         "create_epic",
-        lambda: taiga_client_wrapper.api.epics.create(
+        lambda: taiga_client_wrapper.get_api().epics.create(
             project=project_id, subject=subject, **parsed_kwargs
         ),
         f"epic '{subject}'",
@@ -1453,7 +1486,7 @@ def get_epic(
     taiga_client_wrapper = _get_authenticated_client(actual_session_id)
 
     result = _execute_taiga_operation(
-        "get_epic", lambda: taiga_client_wrapper.api.epics.get(epic_id), f"epic {epic_id}"
+        "get_epic", lambda: taiga_client_wrapper.get_api().epics.get(epic_id), f"epic {epic_id}"
     )
     return _filter_response(result, "epic", verbosity)
 
@@ -1463,7 +1496,7 @@ def get_epic(
     description="Updates details of an existing epic. verbosity: 'minimal', 'standard' (default), 'full'. Uses default session if session_id not provided.",
 )
 def update_epic(
-    epic_id: int, kwargs: str = "{}", session_id: Optional[str] = None, verbosity: str = "standard"
+    epic_id: int, kwargs: Any = None, session_id: Optional[str] = None, verbosity: str = "standard"
 ) -> Dict[str, Any]:
     """Updates an epic. Pass fields to update as kwargs JSON string (e.g., {"subject": "New", "color": "#FF0000"})."""
     actual_session_id = _get_session_id(session_id)
@@ -1475,17 +1508,17 @@ def update_epic(
     try:
         if not parsed_kwargs:
             logger.info(f"No fields provided for update on epic {epic_id}")
-            result = taiga_client_wrapper.api.epics.get(epic_id)
+            result = taiga_client_wrapper.get_api().epics.get(epic_id)
             return _filter_response(result, "epic", verbosity)
 
         # Get current epic data to retrieve version
-        current_epic = taiga_client_wrapper.api.epics.get(epic_id)
+        current_epic = taiga_client_wrapper.get_api().epics.get(epic_id)
         version = current_epic.get("version")
         if not version:
             raise ValueError(f"Could not determine version for epic {epic_id}")
 
         # Use edit method for partial updates with keyword arguments
-        updated_epic = taiga_client_wrapper.api.epics.edit(
+        updated_epic = taiga_client_wrapper.get_api().epics.edit(
             epic_id=epic_id, version=version, **parsed_kwargs
         )
         logger.info(f"Epic {epic_id} update request sent.")
@@ -1509,7 +1542,7 @@ def delete_epic(epic_id: int, session_id: Optional[str] = None) -> Dict[str, Any
     taiga_client_wrapper = _get_authenticated_client(actual_session_id)
 
     def do_delete():
-        taiga_client_wrapper.api.epics.delete(epic_id=epic_id)
+        taiga_client_wrapper.get_api().epics.delete(epic_id=epic_id)
         return {"status": "deleted", "epic_id": epic_id}
 
     return _execute_taiga_operation("delete_epic", do_delete, f"epic {epic_id}")
@@ -1545,6 +1578,40 @@ def unassign_epic_from_user(epic_id: int, session_id: Optional[str] = None) -> D
     return update_epic(epic_id, json.dumps({"assigned_to": None}), actual_session_id)
 
 
+@mcp.tool(
+    "link_user_story_to_epic",
+    description="Links a User Story to an Epic. Uses default session if session_id not provided.",
+)
+def link_user_story_to_epic(
+    epic_id: int, user_story_id: int, session_id: Optional[str] = None
+) -> Dict[str, Any]:
+    """Links a user story to an epic."""
+    actual_session_id = _get_session_id(session_id)
+    logger.info(
+        f"Executing link_user_story_to_epic: Epic {epic_id} <- Story {user_story_id}, session {actual_session_id[:8]}..."
+    )
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
+
+    def do_link():
+        # Direct API call to ensure correct endpoint and payload
+        # Correct endpoint: /epics/{epic_id}/related_userstories (no underscore in userstories)
+        # Payload must include 'epic' ID and 'user_story' ID
+        # Using 'json' kwarg as this is standard for requests/client wrappers
+        taiga_client_wrapper.get_api().post(
+            f"/epics/{epic_id}/related_userstories",
+            json={"epic": epic_id, "user_story": user_story_id},
+        )
+        return {
+            "status": "linked",
+            "epic_id": epic_id,
+            "user_story_id": user_story_id,
+        }
+
+    return _execute_taiga_operation(
+        "link_user_story_to_epic", do_link, f"link story {user_story_id} to epic {epic_id}"
+    )
+
+
 # --- Milestone (Sprint) Tools ---
 
 
@@ -1564,7 +1631,7 @@ def list_milestones(
 
     result = _execute_taiga_operation(
         "list_milestones",
-        lambda: taiga_client_wrapper.api.milestones.list(project=project_id),
+        lambda: taiga_client_wrapper.get_api().milestones.list(project=project_id),
         f"project {project_id}",
     )
     return _filter_response(result, "milestone", verbosity)
@@ -1593,7 +1660,7 @@ def create_milestone(
 
     result = _execute_taiga_operation(
         "create_milestone",
-        lambda: taiga_client_wrapper.api.milestones.create(
+        lambda: taiga_client_wrapper.get_api().milestones.create(
             project=project_id,
             name=name,
             estimated_start=estimated_start,
@@ -1618,7 +1685,7 @@ def get_milestone(
 
     result = _execute_taiga_operation(
         "get_milestone",
-        lambda: taiga_client_wrapper.api.milestones.get(milestone_id),
+        lambda: taiga_client_wrapper.get_api().milestones.get(milestone_id),
         f"milestone {milestone_id}",
     )
     return _filter_response(result, "milestone", verbosity)
@@ -1630,7 +1697,7 @@ def get_milestone(
 )
 def update_milestone(
     milestone_id: int,
-    kwargs: str = "{}",
+    kwargs: Any = None,
     session_id: Optional[str] = None,
     verbosity: str = "standard",
 ) -> Dict[str, Any]:
@@ -1644,17 +1711,19 @@ def update_milestone(
     try:
         if not parsed_kwargs:
             logger.info(f"No fields provided for update on milestone {milestone_id}")
-            result = taiga_client_wrapper.api.milestones.get(milestone_id)
+            result = taiga_client_wrapper.get_api().milestones.get(milestone_id)
             return _filter_response(result, "milestone", verbosity)
 
         # Get current milestone data to retrieve version
-        current_milestone = taiga_client_wrapper.api.milestones.get(milestone_id)
+        current_milestone = taiga_client_wrapper.get_api().milestones.get(milestone_id)
         version = current_milestone.get("version")
         if not version:
-            raise ValueError(f"Could not determine version for milestone {milestone_id}")
+            logger.warning(
+                f"Could not determine version for milestone {milestone_id}. Attempting update without version."
+            )
 
         # Use edit method for partial updates with keyword arguments
-        updated_milestone = taiga_client_wrapper.api.milestones.edit(
+        updated_milestone = taiga_client_wrapper.get_api().milestones.edit(
             milestone_id=milestone_id, version=version, **parsed_kwargs
         )
         logger.info(f"Milestone {milestone_id} update request sent.")
@@ -1680,7 +1749,7 @@ def delete_milestone(milestone_id: int, session_id: Optional[str] = None) -> Dic
     taiga_client_wrapper = _get_authenticated_client(actual_session_id)
 
     def do_delete():
-        taiga_client_wrapper.api.milestones.delete(milestone_id=milestone_id)
+        taiga_client_wrapper.get_api().milestones.delete(milestone_id=milestone_id)
         return {"status": "deleted", "milestone_id": milestone_id}
 
     return _execute_taiga_operation("delete_milestone", do_delete, f"milestone {milestone_id}")
@@ -1705,7 +1774,9 @@ def get_project_members(
 
     result = _execute_taiga_operation(
         "get_project_members",
-        lambda: taiga_client_wrapper.api.memberships.list(query_params={"project": project_id}),
+        lambda: taiga_client_wrapper.get_api().memberships.list(
+            query_params={"project": project_id}
+        ),
         f"project {project_id}",
     )
     return _filter_response(result, "member", verbosity)
@@ -1728,7 +1799,7 @@ def invite_project_user(
         raise ValueError("Email cannot be empty.")
 
     def do_invite():
-        result = taiga_client_wrapper.api.memberships.invite(
+        result = taiga_client_wrapper.get_api().memberships.invite(
             project=project_id, email=email, role_id=role_id
         )
         return (
@@ -1761,7 +1832,7 @@ def list_wiki_pages(
 
     result = _execute_taiga_operation(
         "list_wiki_pages",
-        lambda: taiga_client_wrapper.api.wiki.list(query_params={"project": project_id}),
+        lambda: taiga_client_wrapper.get_api().wiki.list(query_params={"project": project_id}),
         f"project {project_id}",
     )
     return _filter_response(result, "wiki_page", verbosity)
@@ -1781,8 +1852,40 @@ def get_wiki_page(
 
     result = _execute_taiga_operation(
         "get_wiki_page",
-        lambda: taiga_client_wrapper.api.wiki.get(wiki_page_id),
+        lambda: taiga_client_wrapper.get_api().wiki.get(wiki_page_id),
         f"wiki page {wiki_page_id}",
+    )
+    return _filter_response(result, "wiki_page", verbosity)
+
+
+@mcp.tool(
+    "create_wiki_page",
+    description="Creates a new wiki page. verbosity: 'minimal', 'standard' (default), 'full'. Uses default session if session_id not provided.",
+)
+def create_wiki_page(
+    project_id: int,
+    slug: str,
+    content: str,
+    kwargs: Any = None,
+    session_id: Optional[str] = None,
+    verbosity: str = "standard",
+) -> Dict[str, Any]:
+    """Creates a wiki page. Requires project_id, slug, and content."""
+    actual_session_id = _get_session_id(session_id)
+    parsed_kwargs = _validate_kwargs("wiki_page", _parse_mcp_kwargs({"kwargs": kwargs}))
+    logger.info(
+        f"Executing create_wiki_page '{slug}' in project {project_id}, session {actual_session_id[:8]}..."
+    )
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
+    if not slug or not content:
+        raise ValueError("Wiki page slug and content are required.")
+
+    result = _execute_taiga_operation(
+        "create_wiki_page",
+        lambda: taiga_client_wrapper.get_api().wiki.create(
+            project=project_id, slug=slug, content=content, **parsed_kwargs
+        ),
+        f"wiki page '{slug}'",
     )
     return _filter_response(result, "wiki_page", verbosity)
 
@@ -1821,7 +1924,7 @@ def session_status(session_id: Optional[str] = None) -> Dict[str, Any]:
     if client_wrapper and client_wrapper.is_authenticated:
         try:
             # Use pytaigaclient users.get_me() call
-            me = client_wrapper.api.users.get_me()
+            me = client_wrapper.get_api().users.get_me()
             # Extract username from the returned dict
             username = me.get("username", "Unknown")
             logger.debug(f"Session {actual_session_id[:8]} is active for user {username}.")
