@@ -97,6 +97,5 @@ class TestTaigaIntegration:
         finally:
             # Clean up - mark it as a test that can be ignored/deleted manually
             # Note: story_id, kwargs dict, session_id
-            update_user_story = getattr(src.server, "update_user_story", None)
-            if update_user_story:
-                update_user_story(story_id, {"subject": f"[TEST - CAN DELETE] {subject}"}, session_id)
+            if "update_user_story" in dir(src.server):
+                src.server.update_user_story(story_id, {"subject": f"[TEST - CAN DELETE] {subject}"}, session_id)
