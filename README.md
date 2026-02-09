@@ -9,7 +9,8 @@
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
-[![CI](https://github.com/talhaorak/pytaiga-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/talhaorak/pytaiga-mcp/actions/workflows/ci.yml)
+[![CI](https://github.com/talhaorak/pytaiga-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/talhaorak/pytaiga-mcp/actions/workflows/ci.yml)  
+[!["Buy Me A Coffee"](https://www.buymeacoffee.com/assets/img/custom_images/orange_img.png)](buymeacoffee.com/talhao)
 
 ## Overview
 
