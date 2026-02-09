@@ -6,7 +6,6 @@ Tests the full lifecycle (Create-Read-Update-Delete) of major resources.
 
 import json
 import os
-import time
 import uuid
 import logging
 from src.config import settings
