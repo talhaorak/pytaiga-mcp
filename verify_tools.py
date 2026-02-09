@@ -4,7 +4,6 @@ Comprehensive verification script for Taiga MCP tools.
 Tests the full lifecycle (Create-Read-Update-Delete) of major resources.
 """
 
-import json
 import os
 import uuid
 import logging
