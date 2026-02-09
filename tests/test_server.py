@@ -293,10 +293,10 @@ class TestTaigaTools:
         """Test update_project functionality with version."""
         session_id, mock_client = session_setup
         mock_client.api.projects.get.return_value = {"id": 123, "name": "Old Name", "version": 1}
-        mock_client.api.projects.update.return_value = {"id": 123, "name": "New Name", "version": 2}
+        mock_client.api.projects.edit.return_value = {"id": 123, "name": "New Name", "version": 2}
         result = src.server.update_project(123, '{"name": "New Name"}', session_id)
-        mock_client.api.projects.update.assert_called_once_with(
-            project_id=123, project_data={"name": "New Name"}, version=1
+        mock_client.api.projects.edit.assert_called_once_with(
+            project_id=123, version=1, name="New Name"
         )
         assert result["name"] == "New Name"
 
@@ -304,9 +304,11 @@ class TestTaigaTools:
         """Test update_project when project has no version field (Taiga projects)."""
         session_id, mock_client = session_setup
         mock_client.api.projects.get.return_value = {"id": 123, "name": "Old Name"}
-        mock_client.api.patch.return_value = {"id": 123, "name": "New Name"}
+        mock_client.api.projects.edit.return_value = {"id": 123, "name": "New Name"}
         result = src.server.update_project(123, '{"name": "New Name"}', session_id)
-        mock_client.api.patch.assert_called_once_with("/projects/123", json={"name": "New Name"})
+        mock_client.api.projects.edit.assert_called_once_with(
+            project_id=123, version=None, name="New Name"
+        )
         assert result["name"] == "New Name"
 
     def test_update_project_no_kwargs(self, session_setup):
