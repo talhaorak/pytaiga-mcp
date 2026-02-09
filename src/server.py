@@ -779,9 +779,7 @@ def list_user_stories(
 
     result = _execute_taiga_operation(
         "list_user_stories",
-        lambda: taiga_client_wrapper.api.user_stories.list(
-            project=project_id, **parsed_filters
-        ),
+        lambda: taiga_client_wrapper.api.user_stories.list(project=project_id, **parsed_filters),
         f"project {project_id}",
     )
     return _filter_response(result, "user_story", verbosity)
@@ -1143,9 +1141,7 @@ def get_task_statuses(project_id: int, session_id: Optional[str] = None) -> List
 
     return _execute_taiga_operation(
         "get_task_statuses",
-        lambda: taiga_client_wrapper.api.task_statuses.list(
-            query_params={"project": project_id}
-        ),
+        lambda: taiga_client_wrapper.api.task_statuses.list(query_params={"project": project_id}),
         f"project {project_id}",
     )
 
@@ -1346,9 +1342,7 @@ def get_issue_statuses(project_id: int, session_id: Optional[str] = None) -> Lis
 
     return _execute_taiga_operation(
         "get_issue_statuses",
-        lambda: taiga_client_wrapper.api.issue_statuses.list(
-            query_params={"project": project_id}
-        ),
+        lambda: taiga_client_wrapper.api.issue_statuses.list(query_params={"project": project_id}),
         f"project {project_id}",
     )
 
@@ -1405,9 +1399,7 @@ def get_issue_types(project_id: int, session_id: Optional[str] = None) -> List[D
 
     return _execute_taiga_operation(
         "get_issue_types",
-        lambda: taiga_client_wrapper.api.issue_types.list(
-            query_params={"project": project_id}
-        ),
+        lambda: taiga_client_wrapper.api.issue_types.list(query_params={"project": project_id}),
         f"project {project_id}",
     )
 
@@ -1775,9 +1767,7 @@ def get_project_members(
 
     result = _execute_taiga_operation(
         "get_project_members",
-        lambda: taiga_client_wrapper.api.memberships.list(
-            query_params={"project": project_id}
-        ),
+        lambda: taiga_client_wrapper.api.memberships.list(query_params={"project": project_id}),
         f"project {project_id}",
     )
     return _filter_response(result, "member", verbosity)

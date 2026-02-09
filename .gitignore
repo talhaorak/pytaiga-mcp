@@ -174,4 +174,4 @@ cython_debug/
 .pypirc
 
 # vscode
-.vscode/
+.vscode/.DS_Store

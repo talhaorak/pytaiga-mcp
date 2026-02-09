@@ -15,7 +15,9 @@ from src.server import (
 )
 
 # Test constants - use environment variables or defaults for testing
-TEST_HOST = os.environ.get("TAIGA_TEST_HOST", os.environ.get("TAIGA_API_URL", "http://localhost:9000"))
+TEST_HOST = os.environ.get(
+    "TAIGA_TEST_HOST", os.environ.get("TAIGA_API_URL", "http://localhost:9000")
+)
 TEST_USERNAME = os.environ.get("TAIGA_TEST_USERNAME", os.environ.get("TAIGA_USERNAME", "test"))
 TEST_PASSWORD = os.environ.get("TAIGA_TEST_PASSWORD", os.environ.get("TAIGA_PASSWORD", "test"))
 
@@ -64,7 +66,7 @@ class TestTaigaIntegration:
         projects = list_projects(session_id)
         print(f"DEBUG: Found {len(projects)} projects")  # DEBUG
         assert len(projects) > 0, "No projects found in your Taiga account"
-        
+
         # Prefer Project ID 10 (known working), otherwise avoid corrupted ID 9
         project_id = next((p["id"] for p in projects if p["id"] == 10), None)
         if not project_id:
@@ -98,4 +100,6 @@ class TestTaigaIntegration:
             # Clean up - mark it as a test that can be ignored/deleted manually
             # Note: story_id, kwargs dict, session_id
             if "update_user_story" in dir(src.server):
-                src.server.update_user_story(story_id, {"subject": f"[TEST - CAN DELETE] {subject}"}, session_id)
+                src.server.update_user_story(
+                    story_id, {"subject": f"[TEST - CAN DELETE] {subject}"}, session_id
+                )
