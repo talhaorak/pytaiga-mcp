@@ -1999,7 +1999,9 @@ def add_comment(
     def do_add_comment():
         # Get current version for optimistic concurrency control
         obj = taiga_client_wrapper.api.get(f"/{patch_path}/{object_id}")
-        version = obj.get("version", 1)
+        version = obj.get("version")
+        if version is None:
+            raise ValueError(f"Could not determine version for {object_type} {object_id}. Cannot add comment.")
         taiga_client_wrapper.api.patch(
             f"/{patch_path}/{object_id}",
             json={"comment": comment, "version": version},
@@ -2029,7 +2031,7 @@ def list_comments(
         session_id: Optional session ID (uses default if not provided)
 
     Returns:
-        List of comment dicts with id, comment, comment_html, user, created_at, delete_comment_date
+        List of comment dicts with id, comment, comment_html, user, and created_at
     """
     if object_type not in _COMMENT_TYPE_MAP:
         raise ValueError(
@@ -2042,19 +2044,17 @@ def list_comments(
 
     def do_list_comments():
         history = taiga_client_wrapper.api.get(f"/history/{history_path}/{object_id}")
-        comments = []
-        for entry in history:
-            if entry.get("comment") and entry["comment"].strip() and not entry.get("delete_comment_date"):
-                comments.append(
-                    {
-                        "id": entry.get("id"),
-                        "comment": entry["comment"],
-                        "comment_html": entry.get("comment_html", ""),
-                        "user": entry.get("user"),
-                        "created_at": entry.get("created_at"),
-                    }
-                )
-        return comments
+        return [
+            {
+                "id": entry.get("id"),
+                "comment": entry["comment"],
+                "comment_html": entry.get("comment_html", ""),
+                "user": entry.get("user"),
+                "created_at": entry.get("created_at"),
+            }
+            for entry in history
+            if entry.get("comment", "").strip() and not entry.get("delete_comment_date")
+        ]
 
     return _execute_taiga_operation(
         "list_comments", do_list_comments, f"{object_type} {object_id}"

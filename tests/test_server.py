@@ -1044,6 +1044,14 @@ class TestTaigaTools:
         with pytest.raises(ValueError, match="Invalid object_type"):
             src.server.add_comment(1, "invalid_type", "comment", session_id)
 
+    def test_add_comment_missing_version(self, session_setup):
+        """Test add_comment raises ValueError when object has no version field."""
+        session_id, mock_client = session_setup
+        mock_client.api.get.return_value = {"id": 42}
+
+        with pytest.raises(RuntimeError, match="Server error"):
+            src.server.add_comment(42, "issue", "Test comment", session_id)
+
     def test_list_comments(self, session_setup):
         """Test list_comments filters history to non-empty comments."""
         session_id, mock_client = session_setup
@@ -1061,6 +1069,12 @@ class TestTaigaTools:
                 "comment": "",
                 "user": {"id": 1, "name": "User1"},
                 "created_at": "2026-01-02T00:00:00Z",
+            },
+            {
+                "id": "mno",
+                "comment": "   ",
+                "user": {"id": 1, "name": "User1"},
+                "created_at": "2026-01-02T01:00:00Z",
             },
             {
                 "id": "ghi",
