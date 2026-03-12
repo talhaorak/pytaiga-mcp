@@ -152,6 +152,16 @@ ALLOWED_KWARGS: Dict[str, set] = {
     },
 }
 
+# --- Comment Type Mapping ---
+# Maps user-facing type names to (patch_path_segment, history_path_segment)
+_COMMENT_TYPE_MAP = {
+    "issue": ("issues", "issue"),
+    "task": ("tasks", "task"),
+    "user_story": ("userstories", "userstory"),
+    "userstory": ("userstories", "userstory"),
+    "epic": ("epics", "epic"),
+}
+
 # --- Response Field Filtering ---
 # Define which fields to include at each verbosity level per resource type
 # - 'minimal': Core identification fields only
@@ -1952,6 +1962,104 @@ def session_status(session_id: Optional[str] = None) -> Dict[str, Any]:
     else:  # Session ID not found
         logger.debug(f"Session {actual_session_id[:8]} not found.")
         return {"status": "inactive", "reason": "not_found", "session_id": actual_session_id}
+
+
+# --- Comment Tools ---
+
+
+@mcp.tool()
+def add_comment(
+    object_id: int,
+    object_type: str,
+    comment: str,
+    session_id: Optional[str] = None,
+) -> dict:
+    """Add a comment to a Taiga object (issue, task, user_story, or epic).
+
+    Args:
+        object_id: The ID of the object to comment on
+        object_type: Type of object: 'issue', 'task', 'user_story', 'userstory', or 'epic'
+        comment: The comment text to add
+        session_id: Optional session ID (uses default if not provided)
+
+    Returns:
+        dict with status confirmation
+    """
+    if object_type not in _COMMENT_TYPE_MAP:
+        raise ValueError(
+            f"Invalid object_type '{object_type}'. Must be one of: {', '.join(sorted(_COMMENT_TYPE_MAP.keys()))}"
+        )
+    if not comment or not comment.strip():
+        raise ValueError("Comment text must not be empty.")
+
+    patch_path, _ = _COMMENT_TYPE_MAP[object_type]
+    actual_session_id = _get_session_id(session_id)
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
+
+    def do_add_comment():
+        # Get current version for optimistic concurrency control
+        obj = taiga_client_wrapper.api.get(f"/{patch_path}/{object_id}")
+        version = obj.get("version", 1)
+        taiga_client_wrapper.api.patch(
+            f"/{patch_path}/{object_id}",
+            json={"comment": comment, "version": version},
+        )
+        return {
+            "status": "comment_added",
+            "object_type": object_type,
+            "object_id": object_id,
+        }
+
+    return _execute_taiga_operation(
+        "add_comment", do_add_comment, f"{object_type} {object_id}"
+    )
+
+
+@mcp.tool()
+def list_comments(
+    object_id: int,
+    object_type: str,
+    session_id: Optional[str] = None,
+) -> list:
+    """List comments on a Taiga object (issue, task, user_story, or epic).
+
+    Args:
+        object_id: The ID of the object
+        object_type: Type of object: 'issue', 'task', 'user_story', 'userstory', or 'epic'
+        session_id: Optional session ID (uses default if not provided)
+
+    Returns:
+        List of comment dicts with id, comment, comment_html, user, created_at, delete_comment_date
+    """
+    if object_type not in _COMMENT_TYPE_MAP:
+        raise ValueError(
+            f"Invalid object_type '{object_type}'. Must be one of: {', '.join(sorted(_COMMENT_TYPE_MAP.keys()))}"
+        )
+
+    _, history_path = _COMMENT_TYPE_MAP[object_type]
+    actual_session_id = _get_session_id(session_id)
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
+
+    def do_list_comments():
+        history = taiga_client_wrapper.api.get(f"/history/{history_path}/{object_id}")
+        comments = []
+        for entry in history:
+            if entry.get("comment") and entry["comment"].strip():
+                comments.append(
+                    {
+                        "id": entry.get("id"),
+                        "comment": entry["comment"],
+                        "comment_html": entry.get("comment_html", ""),
+                        "user": entry.get("user"),
+                        "created_at": entry.get("created_at"),
+                        "delete_comment_date": entry.get("delete_comment_date"),
+                    }
+                )
+        return comments
+
+    return _execute_taiga_operation(
+        "list_comments", do_list_comments, f"{object_type} {object_id}"
+    )
 
 
 # --- Run the server ---
