@@ -504,6 +504,35 @@ def _filter_response(response, resource_type: str, verbosity: str = "standard"):
     return filter_dict(response)
 
 
+def _get_item_by_ref(
+    item_type: str,
+    api_collection_name: str,
+    project_id: int,
+    ref: int,
+    session_id: Optional[str],
+    verbosity: str,
+) -> Dict[str, Any]:
+    """Generic helper to retrieve a Taiga item by its ref number."""
+    actual_session_id = _get_session_id(session_id)
+    logger.info(
+        f"Executing get_{item_type}_by_ref ref #{ref} in project {project_id} for session {actual_session_id[:8]}..."
+    )
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
+    api_collection = getattr(taiga_client_wrapper.api, api_collection_name)
+
+    item_label = item_type.replace("_", " ")
+    result = _execute_taiga_operation(
+        f"get_{item_type}_by_ref",
+        lambda: api_collection.get_by_ref(ref=ref, project=project_id),
+        f"{item_label} ref #{ref} in project {project_id}",
+    )
+    if not result:
+        raise ValueError(
+            f"{item_label.capitalize()} with ref #{ref} not found in project {project_id}"
+        )
+    return _filter_response(result, item_type, verbosity)
+
+
 # --- MCP Tools ---
 
 
@@ -856,20 +885,7 @@ def get_user_story_by_ref(
     project_id: int, ref: int, session_id: Optional[str] = None, verbosity: str = "standard"
 ) -> Dict[str, Any]:
     """Retrieves user story details by ref number within a project."""
-    actual_session_id = _get_session_id(session_id)
-    logger.info(
-        f"Executing get_user_story_by_ref ref #{ref} in project {project_id} for session {actual_session_id[:8]}..."
-    )
-    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
-
-    result = _execute_taiga_operation(
-        "get_user_story_by_ref",
-        lambda: taiga_client_wrapper.api.user_stories.get_by_ref(ref=ref, project=project_id),
-        f"user story ref #{ref} in project {project_id}",
-    )
-    if not result:
-        raise ValueError(f"User story with ref #{ref} not found in project {project_id}")
-    return _filter_response(result, "user_story", verbosity)
+    return _get_item_by_ref("user_story", "user_stories", project_id, ref, session_id, verbosity)
 
 
 @mcp.tool(
@@ -1310,20 +1326,7 @@ def get_issue_by_ref(
     project_id: int, ref: int, session_id: Optional[str] = None, verbosity: str = "standard"
 ) -> Dict[str, Any]:
     """Retrieves issue details by ref number within a project."""
-    actual_session_id = _get_session_id(session_id)
-    logger.info(
-        f"Executing get_issue_by_ref ref #{ref} in project {project_id} for session {actual_session_id[:8]}..."
-    )
-    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
-
-    result = _execute_taiga_operation(
-        "get_issue_by_ref",
-        lambda: taiga_client_wrapper.api.issues.get_by_ref(ref=ref, project=project_id),
-        f"issue ref #{ref} in project {project_id}",
-    )
-    if not result:
-        raise ValueError(f"Issue with ref #{ref} not found in project {project_id}")
-    return _filter_response(result, "issue", verbosity)
+    return _get_item_by_ref("issue", "issues", project_id, ref, session_id, verbosity)
 
 
 @mcp.tool(
@@ -1578,20 +1581,7 @@ def get_epic_by_ref(
     project_id: int, ref: int, session_id: Optional[str] = None, verbosity: str = "standard"
 ) -> Dict[str, Any]:
     """Retrieves epic details by ref number within a project."""
-    actual_session_id = _get_session_id(session_id)
-    logger.info(
-        f"Executing get_epic_by_ref ref #{ref} in project {project_id} for session {actual_session_id[:8]}..."
-    )
-    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
-
-    result = _execute_taiga_operation(
-        "get_epic_by_ref",
-        lambda: taiga_client_wrapper.api.epics.get_by_ref(ref=ref, project=project_id),
-        f"epic ref #{ref} in project {project_id}",
-    )
-    if not result:
-        raise ValueError(f"Epic with ref #{ref} not found in project {project_id}")
-    return _filter_response(result, "epic", verbosity)
+    return _get_item_by_ref("epic", "epics", project_id, ref, session_id, verbosity)
 
 
 @mcp.tool(
