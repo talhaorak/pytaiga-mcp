@@ -1070,6 +1070,14 @@ class TestTaigaTools:
                 "created_at": "2026-01-03T00:00:00Z",
                 "delete_comment_date": None,
             },
+            {
+                "id": "jkl",
+                "comment": "Deleted comment",
+                "comment_html": "<p>Deleted comment</p>",
+                "user": {"id": 1, "name": "User1"},
+                "created_at": "2026-01-04T00:00:00Z",
+                "delete_comment_date": "2026-01-04T01:00:00Z",
+            },
         ]
 
         result = src.server.list_comments(42, "issue", session_id)
@@ -1078,6 +1086,7 @@ class TestTaigaTools:
         assert len(result) == 2
         assert result[0]["comment"] == "First comment"
         assert result[1]["comment"] == "Second comment"
+        assert "delete_comment_date" not in result[0]
 
     def test_list_comments_userstory_alias(self, session_setup):
         """Test list_comments with 'userstory' input uses /history/userstory/ path."""

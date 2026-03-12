@@ -2044,7 +2044,7 @@ def list_comments(
         history = taiga_client_wrapper.api.get(f"/history/{history_path}/{object_id}")
         comments = []
         for entry in history:
-            if entry.get("comment") and entry["comment"].strip():
+            if entry.get("comment") and entry["comment"].strip() and not entry.get("delete_comment_date"):
                 comments.append(
                     {
                         "id": entry.get("id"),
@@ -2052,7 +2052,6 @@ def list_comments(
                         "comment_html": entry.get("comment_html", ""),
                         "user": entry.get("user"),
                         "created_at": entry.get("created_at"),
-                        "delete_comment_date": entry.get("delete_comment_date"),
                     }
                 )
         return comments
