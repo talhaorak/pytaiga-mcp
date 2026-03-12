@@ -380,6 +380,29 @@ class TestTaigaTools:
         assert result["id"] == 456
         mock_client.api.user_stories.get.assert_called_once_with(456)
 
+    def test_get_user_story_by_ref(self, session_setup):
+        """Test get_user_story_by_ref returns story by ref number."""
+        session_id, mock_client = session_setup
+        mock_client.api.user_stories.get_by_ref.return_value = {
+            "id": 456,
+            "ref": 1,
+            "subject": "Story",
+            "status": 1,
+            "project": 123,
+            "version": 1,
+        }
+        result = src.server.get_user_story_by_ref(123, 1, session_id)
+        assert result["id"] == 456
+        assert result["ref"] == 1
+        mock_client.api.user_stories.get_by_ref.assert_called_once_with(ref=1, project=123)
+
+    def test_get_user_story_by_ref_not_found(self, session_setup):
+        """Test get_user_story_by_ref raises when ref not found."""
+        session_id, mock_client = session_setup
+        mock_client.api.user_stories.get_by_ref.return_value = None
+        with pytest.raises(ValueError, match="not found"):
+            src.server.get_user_story_by_ref(123, 999, session_id)
+
     def test_update_user_story(self, session_setup):
         """Test update_user_story."""
         session_id, mock_client = session_setup
@@ -525,6 +548,31 @@ class TestTaigaTools:
         assert result["id"] == 789
         mock_client.api.tasks.get.assert_called_once_with(789)
 
+    def test_get_task_by_ref(self, session_setup):
+        """Test get_task_by_ref returns task by ref number via direct API call."""
+        session_id, mock_client = session_setup
+        mock_client.api.get.return_value = {
+            "id": 789,
+            "ref": 5,
+            "subject": "Task",
+            "status": 1,
+            "project": 123,
+            "version": 1,
+        }
+        result = src.server.get_task_by_ref(123, 5, session_id)
+        assert result["id"] == 789
+        assert result["ref"] == 5
+        mock_client.api.get.assert_called_once_with(
+            "/tasks/by_ref", params={"ref": 5, "project": 123}
+        )
+
+    def test_get_task_by_ref_not_found(self, session_setup):
+        """Test get_task_by_ref raises when ref not found."""
+        session_id, mock_client = session_setup
+        mock_client.api.get.return_value = None
+        with pytest.raises(ValueError, match="not found"):
+            src.server.get_task_by_ref(123, 999, session_id)
+
     def test_update_task(self, session_setup):
         """Test update_task."""
         session_id, mock_client = session_setup
@@ -640,6 +688,31 @@ class TestTaigaTools:
         result = src.server.get_issue(100, session_id)
         assert result["id"] == 100
         mock_client.api.issues.get.assert_called_once_with(100)
+
+    def test_get_issue_by_ref(self, session_setup):
+        """Test get_issue_by_ref returns issue by ref number."""
+        session_id, mock_client = session_setup
+        mock_client.api.issues.get_by_ref.return_value = {
+            "id": 100,
+            "ref": 10,
+            "subject": "Bug",
+            "status": 1,
+            "priority": 1,
+            "severity": 1,
+            "project": 123,
+            "version": 1,
+        }
+        result = src.server.get_issue_by_ref(123, 10, session_id)
+        assert result["id"] == 100
+        assert result["ref"] == 10
+        mock_client.api.issues.get_by_ref.assert_called_once_with(ref=10, project=123)
+
+    def test_get_issue_by_ref_not_found(self, session_setup):
+        """Test get_issue_by_ref raises when ref not found."""
+        session_id, mock_client = session_setup
+        mock_client.api.issues.get_by_ref.return_value = {}
+        with pytest.raises(ValueError, match="not found"):
+            src.server.get_issue_by_ref(123, 999, session_id)
 
     def test_update_issue(self, session_setup):
         """Test update_issue."""
@@ -799,6 +872,29 @@ class TestTaigaTools:
         result = src.server.get_epic(200, session_id)
         assert result["id"] == 200
         mock_client.api.epics.get.assert_called_once_with(200)
+
+    def test_get_epic_by_ref(self, session_setup):
+        """Test get_epic_by_ref returns epic by ref number."""
+        session_id, mock_client = session_setup
+        mock_client.api.epics.get_by_ref.return_value = {
+            "id": 200,
+            "ref": 1,
+            "subject": "Epic",
+            "status": 1,
+            "project": 123,
+            "version": 1,
+        }
+        result = src.server.get_epic_by_ref(123, 1, session_id)
+        assert result["id"] == 200
+        assert result["ref"] == 1
+        mock_client.api.epics.get_by_ref.assert_called_once_with(ref=1, project=123)
+
+    def test_get_epic_by_ref_not_found(self, session_setup):
+        """Test get_epic_by_ref raises when ref not found."""
+        session_id, mock_client = session_setup
+        mock_client.api.epics.get_by_ref.return_value = {}
+        with pytest.raises(ValueError, match="not found"):
+            src.server.get_epic_by_ref(123, 999, session_id)
 
     def test_update_epic(self, session_setup):
         """Test update_epic."""

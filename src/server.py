@@ -766,12 +766,12 @@ def delete_project(project_id: int, session_id: Optional[str] = None) -> Dict[st
 
 
 # --- User Story Tools ---
-# Note: get_project_roles, get_*_by_ref functions not implemented - not supported by pytaigaclient
+# Note: get_project_roles not implemented - not supported by pytaigaclient
 
 
 @mcp.tool(
     "list_user_stories",
-    description="Lists user stories within a specific project, optionally filtered. verbosity: 'minimal' (id/ref/subject/status/project), 'standard' (default), 'full'. Uses default session if session_id not provided.",
+    description="Lists user stories within a specific project, optionally filtered. Results include both 'id' (internal, use for get/update/delete) and 'ref' (human-readable '#N' shown in Taiga UI). verbosity: 'minimal' (id/ref/subject/status/project), 'standard' (default), 'full'. Uses default session if session_id not provided.",
 )
 def list_user_stories(
     project_id: int,
@@ -828,7 +828,7 @@ def create_user_story(
 
 @mcp.tool(
     "get_user_story",
-    description="Gets detailed information about a specific user story by its ID. verbosity: 'minimal', 'standard' (default), 'full'. Uses default session if session_id not provided.",
+    description="Gets detailed information about a specific user story by its internal ID (not the ref number shown in Taiga UI). Use get_user_story_by_ref if you have the '#N' reference number instead. verbosity: 'minimal', 'standard' (default), 'full'. Uses default session if session_id not provided.",
 )
 def get_user_story(
     user_story_id: int, session_id: Optional[str] = None, verbosity: str = "standard"
@@ -845,6 +845,30 @@ def get_user_story(
         lambda: taiga_client_wrapper.api.user_stories.get(user_story_id),
         f"user story {user_story_id}",
     )
+    return _filter_response(result, "user_story", verbosity)
+
+
+@mcp.tool(
+    "get_user_story_by_ref",
+    description="Gets a user story by its human-readable reference number (the '#N' shown in Taiga UI). Requires the project_id. Use this instead of get_user_story when you have a ref number. verbosity: 'minimal', 'standard' (default), 'full'. Uses default session if session_id not provided.",
+)
+def get_user_story_by_ref(
+    project_id: int, ref: int, session_id: Optional[str] = None, verbosity: str = "standard"
+) -> Dict[str, Any]:
+    """Retrieves user story details by ref number within a project."""
+    actual_session_id = _get_session_id(session_id)
+    logger.info(
+        f"Executing get_user_story_by_ref ref #{ref} in project {project_id} for session {actual_session_id[:8]}..."
+    )
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
+
+    result = _execute_taiga_operation(
+        "get_user_story_by_ref",
+        lambda: taiga_client_wrapper.api.user_stories.get_by_ref(ref=ref, project=project_id),
+        f"user story ref #{ref} in project {project_id}",
+    )
+    if not result:
+        raise ValueError(f"User story with ref #{ref} not found in project {project_id}")
     return _filter_response(result, "user_story", verbosity)
 
 
@@ -972,7 +996,7 @@ def get_user_story_statuses(
 
 @mcp.tool(
     "list_tasks",
-    description="Lists tasks within a specific project, optionally filtered. verbosity: 'minimal' (id/ref/subject/status/project), 'standard' (default), 'full'. Uses default session if session_id not provided.",
+    description="Lists tasks within a specific project, optionally filtered. Results include both 'id' (internal, use for get/update/delete) and 'ref' (human-readable '#N' shown in Taiga UI). verbosity: 'minimal' (id/ref/subject/status/project), 'standard' (default), 'full'. Uses default session if session_id not provided.",
 )
 def list_tasks(
     project_id: int,
@@ -1033,7 +1057,7 @@ def create_task(
 
 @mcp.tool(
     "get_task",
-    description="Gets detailed information about a specific task by its ID. verbosity: 'minimal', 'standard' (default), 'full'. Uses default session if session_id not provided.",
+    description="Gets detailed information about a specific task by its internal ID (not the ref number shown in Taiga UI). Use get_task_by_ref if you have the '#N' reference number instead. verbosity: 'minimal', 'standard' (default), 'full'. Uses default session if session_id not provided.",
 )
 def get_task(
     task_id: int, session_id: Optional[str] = None, verbosity: str = "standard"
@@ -1046,6 +1070,34 @@ def get_task(
     result = _execute_taiga_operation(
         "get_task", lambda: taiga_client_wrapper.api.tasks.get(task_id), f"task {task_id}"
     )
+    return _filter_response(result, "task", verbosity)
+
+
+@mcp.tool(
+    "get_task_by_ref",
+    description="Gets a task by its human-readable reference number (the '#N' shown in Taiga UI). Requires the project_id. Use this instead of get_task when you have a ref number. verbosity: 'minimal', 'standard' (default), 'full'. Uses default session if session_id not provided.",
+)
+def get_task_by_ref(
+    project_id: int, ref: int, session_id: Optional[str] = None, verbosity: str = "standard"
+) -> Dict[str, Any]:
+    """Retrieves task details by ref number within a project."""
+    actual_session_id = _get_session_id(session_id)
+    logger.info(
+        f"Executing get_task_by_ref ref #{ref} in project {project_id} for session {actual_session_id[:8]}..."
+    )
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
+
+    # Workaround: pytaigaclient Tasks.get_by_ref has a bug - passes query_params but
+    # TaigaClient.get expects params. Use the underlying get method directly.
+    result = _execute_taiga_operation(
+        "get_task_by_ref",
+        lambda: taiga_client_wrapper.api.get(
+            "/tasks/by_ref", params={"ref": ref, "project": project_id}
+        ),
+        f"task ref #{ref} in project {project_id}",
+    )
+    if not result:
+        raise ValueError(f"Task with ref #{ref} not found in project {project_id}")
     return _filter_response(result, "task", verbosity)
 
 
@@ -1161,7 +1213,7 @@ def get_task_statuses(project_id: int, session_id: Optional[str] = None) -> List
 
 @mcp.tool(
     "list_issues",
-    description="Lists issues within a specific project, optionally filtered. verbosity: 'minimal' (id/ref/subject/status/priority/severity/project), 'standard' (default), 'full'. Uses default session if session_id not provided.",
+    description="Lists issues within a specific project, optionally filtered. Results include both 'id' (internal, use for get/update/delete) and 'ref' (human-readable '#N' shown in Taiga UI). verbosity: 'minimal' (id/ref/subject/status/priority/severity/project), 'standard' (default), 'full'. Uses default session if session_id not provided.",
 )
 def list_issues(
     project_id: int,
@@ -1232,7 +1284,7 @@ def create_issue(
 
 @mcp.tool(
     "get_issue",
-    description="Gets detailed information about a specific issue by its ID. verbosity: 'minimal', 'standard' (default), 'full'. Uses default session if session_id not provided.",
+    description="Gets detailed information about a specific issue by its internal ID (not the ref number shown in Taiga UI). Use get_issue_by_ref if you have the '#N' reference number instead. verbosity: 'minimal', 'standard' (default), 'full'. Uses default session if session_id not provided.",
 )
 def get_issue(
     issue_id: int, session_id: Optional[str] = None, verbosity: str = "standard"
@@ -1247,6 +1299,30 @@ def get_issue(
         lambda: taiga_client_wrapper.api.issues.get(issue_id),
         f"issue {issue_id}",
     )
+    return _filter_response(result, "issue", verbosity)
+
+
+@mcp.tool(
+    "get_issue_by_ref",
+    description="Gets an issue by its human-readable reference number (the '#N' shown in Taiga UI). Requires the project_id. Use this instead of get_issue when you have a ref number. verbosity: 'minimal', 'standard' (default), 'full'. Uses default session if session_id not provided.",
+)
+def get_issue_by_ref(
+    project_id: int, ref: int, session_id: Optional[str] = None, verbosity: str = "standard"
+) -> Dict[str, Any]:
+    """Retrieves issue details by ref number within a project."""
+    actual_session_id = _get_session_id(session_id)
+    logger.info(
+        f"Executing get_issue_by_ref ref #{ref} in project {project_id} for session {actual_session_id[:8]}..."
+    )
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
+
+    result = _execute_taiga_operation(
+        "get_issue_by_ref",
+        lambda: taiga_client_wrapper.api.issues.get_by_ref(ref=ref, project=project_id),
+        f"issue ref #{ref} in project {project_id}",
+    )
+    if not result:
+        raise ValueError(f"Issue with ref #{ref} not found in project {project_id}")
     return _filter_response(result, "issue", verbosity)
 
 
@@ -1419,7 +1495,7 @@ def get_issue_types(project_id: int, session_id: Optional[str] = None) -> List[D
 
 @mcp.tool(
     "list_epics",
-    description="Lists epics within a specific project, optionally filtered. verbosity: 'minimal' (id/ref/subject/status/project), 'standard' (default), 'full'. Uses default session if session_id not provided.",
+    description="Lists epics within a specific project, optionally filtered. Results include both 'id' (internal, use for get/update/delete) and 'ref' (human-readable '#N' shown in Taiga UI). verbosity: 'minimal' (id/ref/subject/status/project), 'standard' (default), 'full'. Uses default session if session_id not provided.",
 )
 def list_epics(
     project_id: int,
@@ -1478,7 +1554,7 @@ def create_epic(
 
 @mcp.tool(
     "get_epic",
-    description="Gets detailed information about a specific epic by its ID. verbosity: 'minimal', 'standard' (default), 'full'. Uses default session if session_id not provided.",
+    description="Gets detailed information about a specific epic by its internal ID (not the ref number shown in Taiga UI). Use get_epic_by_ref if you have the '#N' reference number instead. verbosity: 'minimal', 'standard' (default), 'full'. Uses default session if session_id not provided.",
 )
 def get_epic(
     epic_id: int, session_id: Optional[str] = None, verbosity: str = "standard"
@@ -1491,6 +1567,30 @@ def get_epic(
     result = _execute_taiga_operation(
         "get_epic", lambda: taiga_client_wrapper.api.epics.get(epic_id), f"epic {epic_id}"
     )
+    return _filter_response(result, "epic", verbosity)
+
+
+@mcp.tool(
+    "get_epic_by_ref",
+    description="Gets an epic by its human-readable reference number (the '#N' shown in Taiga UI). Requires the project_id. Use this instead of get_epic when you have a ref number. verbosity: 'minimal', 'standard' (default), 'full'. Uses default session if session_id not provided.",
+)
+def get_epic_by_ref(
+    project_id: int, ref: int, session_id: Optional[str] = None, verbosity: str = "standard"
+) -> Dict[str, Any]:
+    """Retrieves epic details by ref number within a project."""
+    actual_session_id = _get_session_id(session_id)
+    logger.info(
+        f"Executing get_epic_by_ref ref #{ref} in project {project_id} for session {actual_session_id[:8]}..."
+    )
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
+
+    result = _execute_taiga_operation(
+        "get_epic_by_ref",
+        lambda: taiga_client_wrapper.api.epics.get_by_ref(ref=ref, project=project_id),
+        f"epic ref #{ref} in project {project_id}",
+    )
+    if not result:
+        raise ValueError(f"Epic with ref #{ref} not found in project {project_id}")
     return _filter_response(result, "epic", verbosity)
 
 
