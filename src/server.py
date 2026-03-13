@@ -42,7 +42,15 @@ def _parse_mcp_kwargs(kwargs: dict) -> dict:
         if key in ("kwargs", "filters"):
             val = kwargs[key]
             if isinstance(val, str):
-                return json.loads(val) if val else {}
+                if not val:
+                    return {}
+                try:
+                    return json.loads(val)
+                except json.JSONDecodeError as e:
+                    raise ValueError(
+                        f"Invalid JSON in kwargs: {e}. "
+                        f'Ensure all keys are quoted strings (e.g., {{"1": 3}} not {{1: 3}}).'
+                    ) from e
             return val if isinstance(val, dict) else {}
     return kwargs
 
@@ -562,10 +570,12 @@ def login(
         if login_successful:
             # Generate a unique session ID
             new_session_id = str(uuid.uuid4())
-            # Store the authenticated wrapper in our manual session store
             active_sessions[new_session_id] = wrapper
-            logger.info("Login successful. Session created.")
-            # Return the session ID to the client
+            if DEFAULT_SESSION_ID not in active_sessions:
+                active_sessions[DEFAULT_SESSION_ID] = wrapper
+                logger.info("Login successful. Session created and set as default.")
+            else:
+                logger.info("Login successful. Session created (default already exists).")
             return {"session_id": new_session_id}
         else:
             # Should not happen if login raises exception on failure, but handle defensively
@@ -649,7 +659,7 @@ def get_project_by_slug(
 
     result = _execute_taiga_operation(
         "get_project_by_slug",
-        lambda: taiga_client_wrapper.api.projects.get(slug=slug),
+        lambda: taiga_client_wrapper.api.projects.get_by_slug(slug=slug),
         f"slug '{slug}'",
     )
     return _filter_response(result, "project", verbosity)
