@@ -1,0 +1,5 @@
+# Include only what the build needs
+*
+!pyproject.toml
+!uv.lock
+!src/
