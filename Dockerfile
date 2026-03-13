@@ -18,7 +18,13 @@ RUN uv sync --frozen --no-install-project
 # Copy application source
 COPY src/ src/
 
+# Install the project itself (non-editable) so uv run doesn't need to write at runtime
+RUN uv sync --frozen --no-editable
+
+# Disable uv cache so appuser doesn't need a writable cache dir
+ENV UV_CACHE_DIR=/tmp/uv-cache
+
 # Run as non-root
 USER appuser
 
-ENTRYPOINT ["uv", "run", "--frozen", "python", "src/server.py"]
+ENTRYPOINT ["/app/.venv/bin/python", "src/server.py"]
