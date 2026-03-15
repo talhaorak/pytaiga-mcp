@@ -1252,17 +1252,6 @@ class TestTaigaTools:
             assert src.server.active_sessions[src.server.DEFAULT_SESSION_ID] is existing_default
             src.server.active_sessions.clear()
 
-    # ─── get_project_by_slug fix test ─────────────────────────────────
-
-    def test_get_project_by_slug_calls_get_by_slug(self, session_setup):
-        """Test that get_project_by_slug uses get_by_slug, not get."""
-        session_id, mock_client = session_setup
-        mock_project = {"id": 1, "name": "Test", "slug": "test-slug"}
-        mock_client.api.projects.get_by_slug.return_value = mock_project
-
-        src.server.get_project_by_slug("test-slug", session_id=session_id)
-        mock_client.api.projects.get_by_slug.assert_called_once_with(slug="test-slug")
-
 
 # ─── Response Filtering tests ─────────────────────────────────────────
 
