@@ -380,6 +380,29 @@ class TestTaigaTools:
         assert result["id"] == 456
         mock_client.api.user_stories.get.assert_called_once_with(456)
 
+    def test_get_user_story_by_ref(self, session_setup):
+        """Test get_user_story_by_ref returns story by ref number."""
+        session_id, mock_client = session_setup
+        mock_client.api.user_stories.get_by_ref.return_value = {
+            "id": 456,
+            "ref": 1,
+            "subject": "Story",
+            "status": 1,
+            "project": 123,
+            "version": 1,
+        }
+        result = src.server.get_user_story_by_ref(123, 1, session_id)
+        assert result["id"] == 456
+        assert result["ref"] == 1
+        mock_client.api.user_stories.get_by_ref.assert_called_once_with(ref=1, project=123)
+
+    def test_get_user_story_by_ref_not_found(self, session_setup):
+        """Test get_user_story_by_ref raises when ref not found."""
+        session_id, mock_client = session_setup
+        mock_client.api.user_stories.get_by_ref.return_value = None
+        with pytest.raises(ValueError, match="not found"):
+            src.server.get_user_story_by_ref(123, 999, session_id)
+
     def test_update_user_story(self, session_setup):
         """Test update_user_story."""
         session_id, mock_client = session_setup
@@ -525,6 +548,31 @@ class TestTaigaTools:
         assert result["id"] == 789
         mock_client.api.tasks.get.assert_called_once_with(789)
 
+    def test_get_task_by_ref(self, session_setup):
+        """Test get_task_by_ref returns task by ref number via direct API call."""
+        session_id, mock_client = session_setup
+        mock_client.api.get.return_value = {
+            "id": 789,
+            "ref": 5,
+            "subject": "Task",
+            "status": 1,
+            "project": 123,
+            "version": 1,
+        }
+        result = src.server.get_task_by_ref(123, 5, session_id)
+        assert result["id"] == 789
+        assert result["ref"] == 5
+        mock_client.api.get.assert_called_once_with(
+            "/tasks/by_ref", params={"ref": 5, "project": 123}
+        )
+
+    def test_get_task_by_ref_not_found(self, session_setup):
+        """Test get_task_by_ref raises when ref not found."""
+        session_id, mock_client = session_setup
+        mock_client.api.get.return_value = None
+        with pytest.raises(ValueError, match="not found"):
+            src.server.get_task_by_ref(123, 999, session_id)
+
     def test_update_task(self, session_setup):
         """Test update_task."""
         session_id, mock_client = session_setup
@@ -640,6 +688,31 @@ class TestTaigaTools:
         result = src.server.get_issue(100, session_id)
         assert result["id"] == 100
         mock_client.api.issues.get.assert_called_once_with(100)
+
+    def test_get_issue_by_ref(self, session_setup):
+        """Test get_issue_by_ref returns issue by ref number."""
+        session_id, mock_client = session_setup
+        mock_client.api.issues.get_by_ref.return_value = {
+            "id": 100,
+            "ref": 10,
+            "subject": "Bug",
+            "status": 1,
+            "priority": 1,
+            "severity": 1,
+            "project": 123,
+            "version": 1,
+        }
+        result = src.server.get_issue_by_ref(123, 10, session_id)
+        assert result["id"] == 100
+        assert result["ref"] == 10
+        mock_client.api.issues.get_by_ref.assert_called_once_with(ref=10, project=123)
+
+    def test_get_issue_by_ref_not_found(self, session_setup):
+        """Test get_issue_by_ref raises when ref not found."""
+        session_id, mock_client = session_setup
+        mock_client.api.issues.get_by_ref.return_value = {}
+        with pytest.raises(ValueError, match="not found"):
+            src.server.get_issue_by_ref(123, 999, session_id)
 
     def test_update_issue(self, session_setup):
         """Test update_issue."""
@@ -799,6 +872,29 @@ class TestTaigaTools:
         result = src.server.get_epic(200, session_id)
         assert result["id"] == 200
         mock_client.api.epics.get.assert_called_once_with(200)
+
+    def test_get_epic_by_ref(self, session_setup):
+        """Test get_epic_by_ref returns epic by ref number."""
+        session_id, mock_client = session_setup
+        mock_client.api.epics.get_by_ref.return_value = {
+            "id": 200,
+            "ref": 1,
+            "subject": "Epic",
+            "status": 1,
+            "project": 123,
+            "version": 1,
+        }
+        result = src.server.get_epic_by_ref(123, 1, session_id)
+        assert result["id"] == 200
+        assert result["ref"] == 1
+        mock_client.api.epics.get_by_ref.assert_called_once_with(ref=1, project=123)
+
+    def test_get_epic_by_ref_not_found(self, session_setup):
+        """Test get_epic_by_ref raises when ref not found."""
+        session_id, mock_client = session_setup
+        mock_client.api.epics.get_by_ref.return_value = {}
+        with pytest.raises(ValueError, match="not found"):
+            src.server.get_epic_by_ref(123, 999, session_id)
 
     def test_update_epic(self, session_setup):
         """Test update_epic."""
@@ -1003,6 +1099,128 @@ class TestTaigaTools:
         mock_client.api.projects.get.return_value = full_data
         result = src.server.get_project(1, session_id, verbosity="full")
         assert result == full_data
+
+    # ─── Comment tests ─────────────────────────────────────────────────
+
+    def test_add_comment(self, session_setup):
+        """Test add_comment on an issue."""
+        session_id, mock_client = session_setup
+        mock_client.api.get.return_value = {"id": 42, "version": 3}
+        mock_client.api.patch.return_value = {"id": 42, "version": 4}
+
+        result = src.server.add_comment(42, "issue", "Test comment", session_id)
+
+        mock_client.api.get.assert_called_once_with("/issues/42")
+        mock_client.api.patch.assert_called_once_with(
+            "/issues/42", json={"comment": "Test comment", "version": 3}
+        )
+        assert result == {
+            "status": "comment_added",
+            "object_type": "issue",
+            "object_id": 42,
+        }
+
+    def test_add_comment_user_story(self, session_setup):
+        """Test add_comment with user_story alias uses /userstories/ path."""
+        session_id, mock_client = session_setup
+        mock_client.api.get.return_value = {"id": 10, "version": 1}
+        mock_client.api.patch.return_value = {"id": 10, "version": 2}
+
+        result = src.server.add_comment(10, "user_story", "A comment", session_id)
+
+        mock_client.api.get.assert_called_once_with("/userstories/10")
+        mock_client.api.patch.assert_called_once_with(
+            "/userstories/10", json={"comment": "A comment", "version": 1}
+        )
+        assert result["status"] == "comment_added"
+
+    def test_add_comment_invalid_type(self, session_setup):
+        """Test add_comment raises ValueError for invalid object_type."""
+        session_id, mock_client = session_setup
+        with pytest.raises(ValueError, match="Invalid object_type"):
+            src.server.add_comment(1, "invalid_type", "comment", session_id)
+
+    def test_add_comment_missing_version(self, session_setup):
+        """Test add_comment raises ValueError when object has no version field."""
+        session_id, mock_client = session_setup
+        mock_client.api.get.return_value = {"id": 42}
+
+        with pytest.raises(RuntimeError, match="Server error"):
+            src.server.add_comment(42, "issue", "Test comment", session_id)
+
+    def test_list_comments(self, session_setup):
+        """Test list_comments filters history to non-empty comments."""
+        session_id, mock_client = session_setup
+        mock_client.api.get.return_value = [
+            {
+                "id": "abc",
+                "comment": "First comment",
+                "comment_html": "<p>First comment</p>",
+                "user": {"id": 1, "name": "User1"},
+                "created_at": "2026-01-01T00:00:00Z",
+                "delete_comment_date": None,
+            },
+            {
+                "id": "def",
+                "comment": "",
+                "user": {"id": 1, "name": "User1"},
+                "created_at": "2026-01-02T00:00:00Z",
+            },
+            {
+                "id": "mno",
+                "comment": "   ",
+                "user": {"id": 1, "name": "User1"},
+                "created_at": "2026-01-02T01:00:00Z",
+            },
+            {
+                "id": "ghi",
+                "comment": "Second comment",
+                "comment_html": "<p>Second comment</p>",
+                "user": {"id": 2, "name": "User2"},
+                "created_at": "2026-01-03T00:00:00Z",
+                "delete_comment_date": None,
+            },
+            {
+                "id": "jkl",
+                "comment": "Deleted comment",
+                "comment_html": "<p>Deleted comment</p>",
+                "user": {"id": 1, "name": "User1"},
+                "created_at": "2026-01-04T00:00:00Z",
+                "delete_comment_date": "2026-01-04T01:00:00Z",
+            },
+        ]
+
+        result = src.server.list_comments(42, "issue", session_id)
+
+        mock_client.api.get.assert_called_once_with("/history/issue/42")
+        assert len(result) == 2
+        assert result[0]["comment"] == "First comment"
+        assert result[1]["comment"] == "Second comment"
+        assert "delete_comment_date" not in result[0]
+
+    def test_list_comments_userstory_alias(self, session_setup):
+        """Test list_comments with 'userstory' input uses /history/userstory/ path."""
+        session_id, mock_client = session_setup
+        mock_client.api.get.return_value = []
+
+        src.server.list_comments(5, "userstory", session_id)
+
+        mock_client.api.get.assert_called_once_with("/history/userstory/5")
+
+    def test_list_comments_invalid_type(self, session_setup):
+        """Test list_comments raises ValueError for invalid object_type."""
+        session_id, mock_client = session_setup
+        with pytest.raises(ValueError, match="Invalid object_type"):
+            src.server.list_comments(1, "invalid_type", session_id)
+
+    def test_list_comments_empty_history(self, session_setup):
+        """Test list_comments returns empty list for empty history."""
+        session_id, mock_client = session_setup
+        mock_client.api.get.return_value = []
+
+        result = src.server.list_comments(1, "task", session_id)
+
+        assert result == []
 
 
 # ─── Response Filtering tests ─────────────────────────────────────────

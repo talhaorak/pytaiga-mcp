@@ -104,6 +104,56 @@ uv pip install -e .
 uv pip install -e ".[dev]"
 ```
 
+### Docker
+
+Build the image locally:
+
+```bash
+docker build -t pytaiga-mcp .
+```
+
+Run with environment variables:
+
+```bash
+docker run -i --rm \
+  -e TAIGA_API_URL=https://your-taiga-instance.com \
+  -e TAIGA_USERNAME=your_username \
+  -e TAIGA_PASSWORD=your_password \
+  pytaiga-mcp
+```
+
+To use SSE transport instead of stdio, append `--sse`:
+
+```bash
+docker run --rm \
+  -e TAIGA_API_URL=https://your-taiga-instance.com \
+  -e TAIGA_USERNAME=your_username \
+  -e TAIGA_PASSWORD=your_password \
+  -p 8000:8000 \
+  pytaiga-mcp --sse
+```
+
+Example MCP client configuration (`.mcp.json`) for stdio transport:
+
+```json
+{
+  "mcpServers": {
+    "taigaApi": {
+      "command": "docker",
+      "args": [
+        "run", "-i", "--rm",
+        "-e", "TAIGA_API_URL",
+        "-e", "TAIGA_USERNAME",
+        "-e", "TAIGA_PASSWORD",
+        "pytaiga-mcp"
+      ]
+    }
+  }
+}
+```
+
+> **Note**: Use `-i` (interactive) without `-t` (pseudo-TTY) for stdio transport. The `-e VAR` form (without `=value`) forwards the variable from your host environment.
+
 ## Configuration
 
 The bridge can be configured through environment variables or a `.env` file:
