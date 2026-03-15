@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "mcp-taiga-bridge"
 version = "1.1.0"
 description = "Taiga integration bridge for MCP"
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 authors = [{ name = "Talha Orak", email = "talhaorak.git@gmail.com" }]
 maintainers = [{ name = "TETRA" }]
 dependencies = [
@@ -36,7 +36,7 @@ packages = ["src"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py310"
+target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I"]
