@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v1.2.1 (2026-03-15)
+
+### Bug Fixes
+
+- **ci**: Bump GitHub Actions to Node.js 24 compatible versions
+  ([`0c105a4`](https://github.com/TETRA-2023/pytaiga-mcp/commit/0c105a46d42185c7196241d4c66c6f04406d6ce9))
+
+
 ## v1.2.0 (2026-03-15)
 
 ### Bug Fixes
