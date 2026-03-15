@@ -9,8 +9,10 @@
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
-[![CI](https://github.com/talhaorak/pytaiga-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/talhaorak/pytaiga-mcp/actions/workflows/ci.yml)  
-[!["Buy Me A Coffee"](https://www.buymeacoffee.com/assets/img/custom_images/orange_img.png)](buymeacoffee.com/talhao)
+
+> **Actively maintained fork** of [talhaorak/pytaiga-mcp](https://github.com/talhaorak/pytaiga-mcp).
+> This fork adds comment tools, get-by-ref lookups, Docker support, and ongoing bug/security fixes.
+> Upstream PRs remain open ([#8](https://github.com/talhaorak/pytaiga-mcp/pull/8), [#9](https://github.com/talhaorak/pytaiga-mcp/pull/9)) but are not being reviewed.
 
 ## Overview
 
@@ -77,8 +79,8 @@ This project uses [uv](https://github.com/astral-sh/uv) for fast, reliable Pytho
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-org/pyTaigaMCP.git
-cd pyTaigaMCP
+git clone https://github.com/TETRA-2023/pytaiga-mcp.git
+cd pytaiga-mcp
 
 # Install dependencies
 ./install.sh
