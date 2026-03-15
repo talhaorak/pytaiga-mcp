@@ -1233,9 +1233,9 @@ class TestResponseFiltering:
         """version is required for updates in standard level."""
         for resource_type, levels in src.server.RESPONSE_FIELDS.items():
             if resource_type != "member":  # member doesn't have version
-                assert "version" in levels["standard"], (
-                    f"{resource_type} missing version in standard"
-                )
+                assert (
+                    "version" in levels["standard"]
+                ), f"{resource_type} missing version in standard"
 
     def test_filter_minimal_includes_id(self):
         """All minimal levels must include id."""
@@ -1246,9 +1246,9 @@ class TestResponseFiltering:
         """Resources with project association must include project in minimal."""
         project_resources = ["user_story", "task", "issue", "epic", "milestone", "wiki_page"]
         for resource_type in project_resources:
-            assert "project" in src.server.RESPONSE_FIELDS[resource_type]["minimal"], (
-                f"{resource_type} missing project in minimal"
-            )
+            assert (
+                "project" in src.server.RESPONSE_FIELDS[resource_type]["minimal"]
+            ), f"{resource_type} missing project in minimal"
 
     def test_filter_response_handles_none(self):
         """_filter_response should return None when given None."""
