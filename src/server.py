@@ -2091,7 +2091,9 @@ def add_comment(
         obj = taiga_client_wrapper.api.get(f"/{patch_path}/{object_id}")
         version = obj.get("version")
         if version is None:
-            raise ValueError(f"Could not determine version for {object_type} {object_id}. Cannot add comment.")
+            raise ValueError(
+                f"Could not determine version for {object_type} {object_id}. Cannot add comment."
+            )
         taiga_client_wrapper.api.patch(
             f"/{patch_path}/{object_id}",
             json={"comment": comment, "version": version},
@@ -2102,9 +2104,7 @@ def add_comment(
             "object_id": object_id,
         }
 
-    return _execute_taiga_operation(
-        "add_comment", do_add_comment, f"{object_type} {object_id}"
-    )
+    return _execute_taiga_operation("add_comment", do_add_comment, f"{object_type} {object_id}")
 
 
 @mcp.tool()
@@ -2146,9 +2146,7 @@ def list_comments(
             if entry.get("comment", "").strip() and not entry.get("delete_comment_date")
         ]
 
-    return _execute_taiga_operation(
-        "list_comments", do_list_comments, f"{object_type} {object_id}"
-    )
+    return _execute_taiga_operation("list_comments", do_list_comments, f"{object_type} {object_id}")
 
 
 # --- Run the server ---
