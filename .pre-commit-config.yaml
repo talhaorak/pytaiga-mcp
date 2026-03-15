@@ -10,7 +10,7 @@ repos:
     hooks:
       - id: pytest
         name: unit tests
-        entry: uv run pytest tests/test_server.py -v --tb=short
+        entry: uv run --no-sync pytest tests/test_server.py -v --tb=short
         language: system
         pass_filenames: false
         always_run: true
