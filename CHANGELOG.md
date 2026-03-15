@@ -2,6 +2,30 @@
 
 <!-- version list -->
 
+## v1.2.2 (2026-03-15)
+
+### Bug Fixes
+
+- **server**: Handle invalid JSON gracefully in _parse_mcp_kwargs
+  ([`355e6a8`](https://github.com/TETRA-2023/pytaiga-mcp/commit/355e6a8c8da95c209fc72d5d3e214c929ec6fb05))
+
+- **server**: Set default session on login and use correct slug lookup
+  ([`2148586`](https://github.com/TETRA-2023/pytaiga-mcp/commit/2148586bdf60fa93b5ba9342df41d36a42a8c732))
+
+### Documentation
+
+- Update README for Python 3.12, GHCR image, pre-commit hooks
+  ([`d28ffc2`](https://github.com/TETRA-2023/pytaiga-mcp/commit/d28ffc2db91e2f4384690025e75370a070382327))
+
+### Testing
+
+- Add filters key path coverage for _parse_mcp_kwargs
+  ([`30681e5`](https://github.com/TETRA-2023/pytaiga-mcp/commit/30681e5b0c15c6a8badc95f3619a4df3acb083dc))
+
+- Remove duplicate get_project_by_slug test
+  ([`662438c`](https://github.com/TETRA-2023/pytaiga-mcp/commit/662438ce8493eaeded0c7e87d7b122df0268c394))
+
+
 ## v1.2.1 (2026-03-15)
 
 ### Bug Fixes
