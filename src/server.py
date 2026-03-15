@@ -603,7 +603,14 @@ def login(
             new_session_id = str(uuid.uuid4())
             # Store the authenticated wrapper in our manual session store
             active_sessions[new_session_id] = wrapper
-            logger.info("Login successful. Session created.")
+            # Set as default session if none exists yet
+            if DEFAULT_SESSION_ID not in active_sessions:
+                active_sessions[DEFAULT_SESSION_ID] = wrapper
+                logger.info(
+                    f"Login successful. Session created and set as default: '{DEFAULT_SESSION_ID}'"
+                )
+            else:
+                logger.info("Login successful. Session created.")
             # Return the session ID to the client
             return {"session_id": new_session_id}
         else:
@@ -688,7 +695,7 @@ def get_project_by_slug(
 
     result = _execute_taiga_operation(
         "get_project_by_slug",
-        lambda: taiga_client_wrapper.api.projects.get(slug=slug),
+        lambda: taiga_client_wrapper.api.projects.get_by_slug(slug=slug),
         f"slug '{slug}'",
     )
     return _filter_response(result, "project", verbosity)
