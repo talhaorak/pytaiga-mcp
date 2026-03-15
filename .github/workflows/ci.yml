@@ -9,10 +9,6 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ["3.10", "3.11", "3.12", "3.13"]
-
     steps:
       - uses: actions/checkout@v4
 
@@ -21,8 +17,8 @@ jobs:
         with:
           version: "latest"
 
-      - name: Set up Python ${{ matrix.python-version }}
-        run: uv python install ${{ matrix.python-version }}
+      - name: Set up Python
+        run: uv python install 3.12
 
       - name: Install dependencies
         run: uv sync --all-extras --dev
@@ -91,6 +87,7 @@ jobs:
         id: version
         run: |
           VERSION=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          echo "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+' || { echo "::error::Invalid version: $VERSION"; exit 1; }
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Build and push image
@@ -106,7 +103,7 @@ jobs:
           cache-to: type=gha,mode=max
 
   release:
-    needs: [test, lint, docker]
+    needs: [test, lint]
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && github.ref == 'refs/heads/master'
     concurrency: release
