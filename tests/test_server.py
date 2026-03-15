@@ -240,7 +240,7 @@ class TestTaigaTools:
     def test_get_project_by_slug(self, session_setup):
         """Test get_project_by_slug returns project by slug."""
         session_id, mock_client = session_setup
-        mock_client.api.projects.get.return_value = {
+        mock_client.api.projects.get_by_slug.return_value = {
             "id": 123,
             "name": "Test",
             "slug": "test-slug",
@@ -248,7 +248,7 @@ class TestTaigaTools:
         }
         result = src.server.get_project_by_slug("test-slug", session_id)
         assert result["slug"] == "test-slug"
-        mock_client.api.projects.get.assert_called_once_with(slug="test-slug")
+        mock_client.api.projects.get_by_slug.assert_called_once_with(slug="test-slug")
 
     def test_create_project(self, session_setup):
         """Test create_project creates a project."""
@@ -1221,6 +1221,36 @@ class TestTaigaTools:
         result = src.server.list_comments(1, "task", session_id)
 
         assert result == []
+
+    # ─── Login default session tests (PR: fix/login-default-session-and-slug) ──
+
+    def test_login_sets_default_session_when_none_exists(self):
+        """Test that login() sets the default session when no default exists."""
+        with patch.object(TaigaClientWrapper, "login", return_value=True):
+            src.server.active_sessions.clear()
+            result = src.server.login(TEST_HOST, TEST_USERNAME, TEST_PASSWORD)
+            assert "session_id" in result
+            # Default session should have been set
+            assert src.server.DEFAULT_SESSION_ID in src.server.active_sessions
+            # The default session wrapper should be the same object as the new session's
+            new_session_wrapper = src.server.active_sessions[result["session_id"]]
+            default_wrapper = src.server.active_sessions[src.server.DEFAULT_SESSION_ID]
+            assert new_session_wrapper is default_wrapper
+            src.server.active_sessions.clear()
+
+    def test_login_does_not_overwrite_existing_default_session(self):
+        """Test that login() does NOT overwrite an existing default session."""
+        existing_default = MagicMock()
+        existing_default.is_authenticated = True
+        src.server.active_sessions.clear()
+        src.server.active_sessions[src.server.DEFAULT_SESSION_ID] = existing_default
+
+        with patch.object(TaigaClientWrapper, "login", return_value=True):
+            result = src.server.login(TEST_HOST, TEST_USERNAME, TEST_PASSWORD)
+            assert "session_id" in result
+            # Default session should still be the original one
+            assert src.server.active_sessions[src.server.DEFAULT_SESSION_ID] is existing_default
+            src.server.active_sessions.clear()
 
 
 # ─── Response Filtering tests ─────────────────────────────────────────
