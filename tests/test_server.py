@@ -1461,6 +1461,11 @@ class TestTaigaClientWrapper:
         with pytest.raises(ValueError, match="Invalid JSON in 'kwargs' parameter"):
             src.server._parse_mcp_kwargs({"kwargs": "{1: 3}"})
 
+    def test_parse_mcp_kwargs_filters_invalid_json_raises_valueerror(self):
+        """Test that invalid JSON in 'filters' key raises ValueError with correct key name."""
+        with pytest.raises(ValueError, match="Invalid JSON in 'filters' parameter"):
+            src.server._parse_mcp_kwargs({"filters": "{bad}"})
+
     def test_parse_mcp_kwargs_empty_string_returns_empty_dict(self):
         """Test that empty string returns empty dict."""
         result = src.server._parse_mcp_kwargs({"kwargs": ""})
