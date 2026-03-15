@@ -42,7 +42,15 @@ def _parse_mcp_kwargs(kwargs: dict) -> dict:
         if key in ("kwargs", "filters"):
             val = kwargs[key]
             if isinstance(val, str):
-                return json.loads(val) if val else {}
+                if not val:
+                    return {}
+                try:
+                    return json.loads(val)
+                except json.JSONDecodeError as e:
+                    raise ValueError(
+                        f"Invalid JSON in '{key}' parameter: {e}. "
+                        "Please use valid JSON format (e.g., double-quoted strings, no trailing commas)."
+                    ) from e
             return val if isinstance(val, dict) else {}
     return kwargs
 

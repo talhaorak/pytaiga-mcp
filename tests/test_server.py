@@ -1448,3 +1448,20 @@ class TestTaigaClientWrapper:
         wrapper.api.nonexistent = None
         with pytest.raises(ValueError, match="Unknown resource type"):
             wrapper.list_resources("nonexistent")
+
+    # ─── _parse_mcp_kwargs JSON error handling tests (PR: fix/kwargs-json-parsing) ──
+
+    def test_parse_mcp_kwargs_valid_json(self):
+        """Test that valid JSON in kwargs is parsed correctly."""
+        result = src.server._parse_mcp_kwargs({"kwargs": '{"key": "value"}'})
+        assert result == {"key": "value"}
+
+    def test_parse_mcp_kwargs_invalid_json_raises_valueerror(self):
+        """Test that invalid JSON raises ValueError with descriptive message."""
+        with pytest.raises(ValueError, match="Invalid JSON in 'kwargs' parameter"):
+            src.server._parse_mcp_kwargs({"kwargs": "{1: 3}"})
+
+    def test_parse_mcp_kwargs_empty_string_returns_empty_dict(self):
+        """Test that empty string returns empty dict."""
+        result = src.server._parse_mcp_kwargs({"kwargs": ""})
+        assert result == {}
