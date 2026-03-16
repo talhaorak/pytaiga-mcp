@@ -650,7 +650,7 @@ def list_projects(
     logger.info(f"Executing list_projects for session {actual_session_id[:8]}...")
     taiga_client_wrapper = _get_authenticated_client(actual_session_id)
     result = _execute_taiga_operation(
-        "list_projects", lambda: taiga_client_wrapper.api.projects.list()
+        "list_projects", lambda: taiga_client_wrapper.list_resources("projects")
     )
     return _filter_response(result, "project", verbosity)
 
@@ -833,7 +833,9 @@ def list_user_stories(
 
     result = _execute_taiga_operation(
         "list_user_stories",
-        lambda: taiga_client_wrapper.api.user_stories.list(project=project_id, **parsed_filters),
+        lambda: taiga_client_wrapper.list_resources(
+            "user_stories", project_id=project_id, **parsed_filters
+        ),
         f"project {project_id}",
     )
     return _filter_response(result, "user_story", verbosity)
@@ -1015,9 +1017,7 @@ def get_user_story_statuses(
 
     return _execute_taiga_operation(
         "get_user_story_statuses",
-        lambda: taiga_client_wrapper.api.userstory_statuses.list(
-            query_params={"project": project_id}
-        ),
+        lambda: taiga_client_wrapper.list_resources("userstory_statuses", project_id=project_id),
         f"project {project_id}",
     )
 
@@ -1043,13 +1043,11 @@ def list_tasks(
     )
     taiga_client_wrapper = _get_authenticated_client(actual_session_id)
 
-    # Workaround: pytaigaclient Tasks.list has a bug - passes query_params but TaigaClient.get expects params
-    # Use the underlying get method directly
-    query = {"project": project_id, **parsed_filters}
-
     result = _execute_taiga_operation(
         "list_tasks",
-        lambda: taiga_client_wrapper.api.get("/tasks", params=query),
+        lambda: taiga_client_wrapper.list_resources(
+            "tasks", project_id=project_id, **parsed_filters
+        ),
         f"project {project_id}",
     )
     return _filter_response(result, "task", verbosity)
@@ -1234,7 +1232,7 @@ def get_task_statuses(project_id: int, session_id: Optional[str] = None) -> List
 
     return _execute_taiga_operation(
         "get_task_statuses",
-        lambda: taiga_client_wrapper.api.task_statuses.list(query_params={"project": project_id}),
+        lambda: taiga_client_wrapper.list_resources("task_statuses", project_id=project_id),
         f"project {project_id}",
     )
 
@@ -1260,11 +1258,11 @@ def list_issues(
     )
     taiga_client_wrapper = _get_authenticated_client(actual_session_id)
 
-    query = {"project": project_id, **parsed_filters}
-
     result = _execute_taiga_operation(
         "list_issues",
-        lambda: taiga_client_wrapper.api.issues.list(query_params=query),
+        lambda: taiga_client_wrapper.list_resources(
+            "issues", project_id=project_id, **parsed_filters
+        ),
         f"project {project_id}",
     )
     return _filter_response(result, "issue", verbosity)
@@ -1446,7 +1444,7 @@ def get_issue_statuses(project_id: int, session_id: Optional[str] = None) -> Lis
 
     return _execute_taiga_operation(
         "get_issue_statuses",
-        lambda: taiga_client_wrapper.api.issue_statuses.list(query_params={"project": project_id}),
+        lambda: taiga_client_wrapper.list_resources("issue_statuses", project_id=project_id),
         f"project {project_id}",
     )
 
@@ -1465,7 +1463,7 @@ def get_issue_priorities(project_id: int, session_id: Optional[str] = None) -> L
 
     return _execute_taiga_operation(
         "get_issue_priorities",
-        lambda: taiga_client_wrapper.api.get("/priorities", params={"project": project_id}),
+        lambda: taiga_client_wrapper.list_resources("priorities", project_id=project_id),
         f"project {project_id}",
     )
 
@@ -1484,7 +1482,7 @@ def get_issue_severities(project_id: int, session_id: Optional[str] = None) -> L
 
     return _execute_taiga_operation(
         "get_issue_severities",
-        lambda: taiga_client_wrapper.api.get("/severities", params={"project": project_id}),
+        lambda: taiga_client_wrapper.list_resources("severities", project_id=project_id),
         f"project {project_id}",
     )
 
@@ -1503,7 +1501,7 @@ def get_issue_types(project_id: int, session_id: Optional[str] = None) -> List[D
 
     return _execute_taiga_operation(
         "get_issue_types",
-        lambda: taiga_client_wrapper.api.issue_types.list(query_params={"project": project_id}),
+        lambda: taiga_client_wrapper.list_resources("issue_types", project_id=project_id),
         f"project {project_id}",
     )
 
@@ -1529,11 +1527,11 @@ def list_epics(
     )
     taiga_client_wrapper = _get_authenticated_client(actual_session_id)
 
-    query = {"project": project_id, **parsed_filters}
-
     result = _execute_taiga_operation(
         "list_epics",
-        lambda: taiga_client_wrapper.api.epics.list(query_params=query),
+        lambda: taiga_client_wrapper.list_resources(
+            "epics", project_id=project_id, **parsed_filters
+        ),
         f"project {project_id}",
     )
     return _filter_response(result, "epic", verbosity)
@@ -1739,7 +1737,7 @@ def list_milestones(
 
     result = _execute_taiga_operation(
         "list_milestones",
-        lambda: taiga_client_wrapper.api.milestones.list(project=project_id),
+        lambda: taiga_client_wrapper.list_resources("milestones", project_id=project_id),
         f"project {project_id}",
     )
     return _filter_response(result, "milestone", verbosity)
@@ -1882,7 +1880,7 @@ def get_project_members(
 
     result = _execute_taiga_operation(
         "get_project_members",
-        lambda: taiga_client_wrapper.api.memberships.list(query_params={"project": project_id}),
+        lambda: taiga_client_wrapper.list_resources("memberships", project_id=project_id),
         f"project {project_id}",
     )
     return _filter_response(result, "member", verbosity)
@@ -1938,7 +1936,7 @@ def list_wiki_pages(
 
     result = _execute_taiga_operation(
         "list_wiki_pages",
-        lambda: taiga_client_wrapper.api.wiki.list(query_params={"project": project_id}),
+        lambda: taiga_client_wrapper.list_resources("wiki", project_id=project_id),
         f"project {project_id}",
     )
     return _filter_response(result, "wiki_page", verbosity)

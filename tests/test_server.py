@@ -211,16 +211,17 @@ class TestTaigaTools:
     def test_list_projects(self, session_setup):
         """Test list_projects functionality"""
         session_id, mock_client = session_setup
-        mock_client.api.projects.list.return_value = [{"id": 123, "name": "Test Project"}]
+        mock_client.list_resources.return_value = [{"id": 123, "name": "Test Project"}]
         projects = src.server.list_projects(session_id)
         assert len(projects) == 1
         assert projects[0]["name"] == "Test Project"
         assert projects[0]["id"] == 123
+        mock_client.list_resources.assert_called_once_with("projects")
 
     def test_list_all_projects(self, session_setup):
         """Test list_all_projects delegates to list_projects."""
         session_id, mock_client = session_setup
-        mock_client.api.projects.list.return_value = [{"id": 1, "name": "P1"}]
+        mock_client.list_resources.return_value = [{"id": 1, "name": "P1"}]
         projects = src.server.list_all_projects(session_id)
         assert len(projects) == 1
 
@@ -333,18 +334,18 @@ class TestTaigaTools:
     def test_list_user_stories(self, session_setup):
         """Test list_user_stories functionality"""
         session_id, mock_client = session_setup
-        mock_client.api.user_stories.list.return_value = [{"id": 456, "subject": "Test User Story"}]
+        mock_client.list_resources.return_value = [{"id": 456, "subject": "Test User Story"}]
         stories = src.server.list_user_stories(123, "{}", session_id)
         assert len(stories) == 1
         assert stories[0]["subject"] == "Test User Story"
-        mock_client.api.user_stories.list.assert_called_once_with(project=123)
+        mock_client.list_resources.assert_called_once_with("user_stories", project_id=123)
 
     def test_list_user_stories_with_filters(self, session_setup):
         """Test list_user_stories with filters."""
         session_id, mock_client = session_setup
-        mock_client.api.user_stories.list.return_value = [{"id": 1, "subject": "Filtered"}]
+        mock_client.list_resources.return_value = [{"id": 1, "subject": "Filtered"}]
         src.server.list_user_stories(123, '{"status": 1}', session_id)
-        mock_client.api.user_stories.list.assert_called_once_with(project=123, status=1)
+        mock_client.list_resources.assert_called_once_with("user_stories", project_id=123, status=1)
 
     def test_create_user_story(self, session_setup):
         """Test create_user_story functionality"""
@@ -473,35 +474,31 @@ class TestTaigaTools:
     def test_get_user_story_statuses(self, session_setup):
         """Test get_user_story_statuses."""
         session_id, mock_client = session_setup
-        mock_client.api.userstory_statuses.list.return_value = [
+        mock_client.list_resources.return_value = [
             {"id": 1, "name": "New"},
             {"id": 2, "name": "In Progress"},
         ]
         result = src.server.get_user_story_statuses(123, session_id)
         assert len(result) == 2
-        mock_client.api.userstory_statuses.list.assert_called_once_with(
-            query_params={"project": 123}
-        )
+        mock_client.list_resources.assert_called_once_with("userstory_statuses", project_id=123)
 
     # ─── Task tools tests ────────────────────────────────────────────
 
     def test_list_tasks(self, session_setup):
         """Test list_tasks functionality"""
         session_id, mock_client = session_setup
-        mock_client.api.get.return_value = [{"id": 789, "subject": "Test Task"}]
+        mock_client.list_resources.return_value = [{"id": 789, "subject": "Test Task"}]
         tasks = src.server.list_tasks(123, "{}", session_id)
         assert len(tasks) == 1
         assert tasks[0]["subject"] == "Test Task"
-        mock_client.api.get.assert_called_once_with("/tasks", params={"project": 123})
+        mock_client.list_resources.assert_called_once_with("tasks", project_id=123)
 
     def test_list_tasks_with_filters(self, session_setup):
         """Test list_tasks with filters."""
         session_id, mock_client = session_setup
-        mock_client.api.get.return_value = [{"id": 1, "subject": "Filtered"}]
+        mock_client.list_resources.return_value = [{"id": 1, "subject": "Filtered"}]
         src.server.list_tasks(123, '{"milestone": 5}', session_id)
-        mock_client.api.get.assert_called_once_with(
-            "/tasks", params={"project": 123, "milestone": 5}
-        )
+        mock_client.list_resources.assert_called_once_with("tasks", project_id=123, milestone=5)
 
     def test_create_task(self, session_setup):
         """Test create_task."""
@@ -625,20 +622,18 @@ class TestTaigaTools:
     def test_list_issues(self, session_setup):
         """Test list_issues."""
         session_id, mock_client = session_setup
-        mock_client.api.issues.list.return_value = [{"id": 100, "subject": "Bug"}]
+        mock_client.list_resources.return_value = [{"id": 100, "subject": "Bug"}]
         result = src.server.list_issues(123, "{}", session_id)
         assert len(result) == 1
         assert result[0]["subject"] == "Bug"
-        mock_client.api.issues.list.assert_called_once_with(query_params={"project": 123})
+        mock_client.list_resources.assert_called_once_with("issues", project_id=123)
 
     def test_list_issues_with_filters(self, session_setup):
         """Test list_issues with filters."""
         session_id, mock_client = session_setup
-        mock_client.api.issues.list.return_value = []
+        mock_client.list_resources.return_value = []
         src.server.list_issues(123, '{"priority": 3}', session_id)
-        mock_client.api.issues.list.assert_called_once_with(
-            query_params={"project": 123, "priority": 3}
-        )
+        mock_client.list_resources.assert_called_once_with("issues", project_id=123, priority=3)
 
     def test_create_issue(self, session_setup):
         """Test create_issue."""
@@ -764,18 +759,18 @@ class TestTaigaTools:
     def test_get_issue_statuses(self, session_setup):
         """Test get_issue_statuses."""
         session_id, mock_client = session_setup
-        mock_client.api.issue_statuses.list.return_value = [
+        mock_client.list_resources.return_value = [
             {"id": 1, "name": "New"},
             {"id": 2, "name": "Closed"},
         ]
         result = src.server.get_issue_statuses(123, session_id)
         assert len(result) == 2
-        mock_client.api.issue_statuses.list.assert_called_once_with(query_params={"project": 123})
+        mock_client.list_resources.assert_called_once_with("issue_statuses", project_id=123)
 
     def test_get_issue_priorities(self, session_setup):
-        """Test get_issue_priorities uses direct GET with /priorities endpoint."""
+        """Test get_issue_priorities."""
         session_id, mock_client = session_setup
-        mock_client.api.get.return_value = [
+        mock_client.list_resources.return_value = [
             {"id": 1, "name": "Low"},
             {"id": 2, "name": "Normal"},
             {"id": 3, "name": "High"},
@@ -783,13 +778,12 @@ class TestTaigaTools:
         result = src.server.get_issue_priorities(123, session_id)
         assert len(result) == 3
         assert result[0]["name"] == "Low"
-        # Verify it uses the direct GET call, not issue_priorities.list
-        mock_client.api.get.assert_called_once_with("/priorities", params={"project": 123})
+        mock_client.list_resources.assert_called_once_with("priorities", project_id=123)
 
     def test_get_issue_severities(self, session_setup):
-        """Test get_issue_severities uses direct GET with /severities endpoint."""
+        """Test get_issue_severities."""
         session_id, mock_client = session_setup
-        mock_client.api.get.return_value = [
+        mock_client.list_resources.return_value = [
             {"id": 1, "name": "Wishlist"},
             {"id": 2, "name": "Minor"},
             {"id": 3, "name": "Normal"},
@@ -797,39 +791,36 @@ class TestTaigaTools:
         result = src.server.get_issue_severities(123, session_id)
         assert len(result) == 3
         assert result[0]["name"] == "Wishlist"
-        # Verify it uses the direct GET call, not issue_severities.list
-        mock_client.api.get.assert_called_once_with("/severities", params={"project": 123})
+        mock_client.list_resources.assert_called_once_with("severities", project_id=123)
 
     def test_get_issue_types(self, session_setup):
         """Test get_issue_types."""
         session_id, mock_client = session_setup
-        mock_client.api.issue_types.list.return_value = [
+        mock_client.list_resources.return_value = [
             {"id": 1, "name": "Bug"},
             {"id": 2, "name": "Enhancement"},
         ]
         result = src.server.get_issue_types(123, session_id)
         assert len(result) == 2
-        mock_client.api.issue_types.list.assert_called_once_with(query_params={"project": 123})
+        mock_client.list_resources.assert_called_once_with("issue_types", project_id=123)
 
     # ─── Epic tools tests ────────────────────────────────────────────
 
     def test_list_epics(self, session_setup):
         """Test list_epics."""
         session_id, mock_client = session_setup
-        mock_client.api.epics.list.return_value = [{"id": 200, "subject": "Epic 1"}]
+        mock_client.list_resources.return_value = [{"id": 200, "subject": "Epic 1"}]
         result = src.server.list_epics(123, "{}", session_id)
         assert len(result) == 1
         assert result[0]["subject"] == "Epic 1"
-        mock_client.api.epics.list.assert_called_once_with(query_params={"project": 123})
+        mock_client.list_resources.assert_called_once_with("epics", project_id=123)
 
     def test_list_epics_with_filters(self, session_setup):
         """Test list_epics with filters."""
         session_id, mock_client = session_setup
-        mock_client.api.epics.list.return_value = []
+        mock_client.list_resources.return_value = []
         src.server.list_epics(123, '{"status": 2}', session_id)
-        mock_client.api.epics.list.assert_called_once_with(
-            query_params={"project": 123, "status": 2}
-        )
+        mock_client.list_resources.assert_called_once_with("epics", project_id=123, status=2)
 
     def test_create_epic(self, session_setup):
         """Test create_epic."""
@@ -944,13 +935,13 @@ class TestTaigaTools:
     def test_list_milestones(self, session_setup):
         """Test list_milestones."""
         session_id, mock_client = session_setup
-        mock_client.api.milestones.list.return_value = [
+        mock_client.list_resources.return_value = [
             {"id": 300, "name": "Sprint 1", "slug": "sprint-1", "project": 123}
         ]
         result = src.server.list_milestones(123, session_id)
         assert len(result) == 1
         assert result[0]["name"] == "Sprint 1"
-        mock_client.api.milestones.list.assert_called_once_with(project=123)
+        mock_client.list_resources.assert_called_once_with("milestones", project_id=123)
 
     def test_create_milestone(self, session_setup):
         """Test create_milestone."""
@@ -1027,13 +1018,13 @@ class TestTaigaTools:
     def test_get_project_members(self, session_setup):
         """Test get_project_members."""
         session_id, mock_client = session_setup
-        mock_client.api.memberships.list.return_value = [
+        mock_client.list_resources.return_value = [
             {"id": 1, "user": 10, "full_name": "John Doe", "role_name": "Admin"}
         ]
         result = src.server.get_project_members(123, session_id)
         assert len(result) == 1
         assert result[0]["full_name"] == "John Doe"
-        mock_client.api.memberships.list.assert_called_once_with(query_params={"project": 123})
+        mock_client.list_resources.assert_called_once_with("memberships", project_id=123)
 
     def test_invite_project_user(self, session_setup):
         """Test invite_project_user."""
@@ -1060,11 +1051,11 @@ class TestTaigaTools:
     def test_list_wiki_pages(self, session_setup):
         """Test list_wiki_pages."""
         session_id, mock_client = session_setup
-        mock_client.api.wiki.list.return_value = [{"id": 400, "slug": "home", "project": 123}]
+        mock_client.list_resources.return_value = [{"id": 400, "slug": "home", "project": 123}]
         result = src.server.list_wiki_pages(123, session_id)
         assert len(result) == 1
         assert result[0]["slug"] == "home"
-        mock_client.api.wiki.list.assert_called_once_with(query_params={"project": 123})
+        mock_client.list_resources.assert_called_once_with("wiki", project_id=123)
 
     def test_get_wiki_page(self, session_setup):
         """Test get_wiki_page."""
@@ -1086,7 +1077,7 @@ class TestTaigaTools:
     def test_list_projects_verbosity_minimal(self, session_setup):
         """Test list_projects with minimal verbosity."""
         session_id, mock_client = session_setup
-        mock_client.api.projects.list.return_value = [
+        mock_client.list_resources.return_value = [
             {"id": 1, "name": "P1", "slug": "p1", "description": "Long desc", "version": 1}
         ]
         result = src.server.list_projects(session_id, verbosity="minimal")
@@ -1440,42 +1431,60 @@ class TestTaigaClientWrapper:
         with pytest.raises(PermissionError):
             wrapper.list_resources("projects")
 
-    def test_list_resources_raw_api(self):
-        """Test list_resources uses raw API for tasks."""
+    def test_list_resources_sends_disable_pagination_header(self):
+        """Test list_resources sends x-disable-pagination header."""
         wrapper = TaigaClientWrapper(host="http://test:9000")
         wrapper.api = MagicMock()
         wrapper.api.auth_token = "test-token"
         wrapper.api.get.return_value = [{"id": 1}]
-        result = wrapper.list_resources("tasks", project_id=123)
-        wrapper.api.get.assert_called_once_with("/tasks", params={"project": 123})
-        assert result == [{"id": 1}]
+        wrapper.list_resources("projects")
+        wrapper.api.get.assert_called_once_with(
+            "/projects", params={}, headers={"x-disable-pagination": "True"}
+        )
 
-    def test_list_resources_project_kwarg(self):
-        """Test list_resources uses project kwarg for user_stories."""
+    def test_list_resources_endpoint_mapping(self):
+        """Test list_resources maps resource types to correct endpoints."""
+        from src.taiga_client import _RESOURCE_ENDPOINTS
+
         wrapper = TaigaClientWrapper(host="http://test:9000")
         wrapper.api = MagicMock()
         wrapper.api.auth_token = "test-token"
-        wrapper.api.user_stories.list.return_value = [{"id": 1}]
-        result = wrapper.list_resources("user_stories", project_id=123)
-        wrapper.api.user_stories.list.assert_called_once_with(project=123)
-        assert result == [{"id": 1}]
+        wrapper.api.get.return_value = []
+        for resource_type, endpoint in _RESOURCE_ENDPOINTS.items():
+            wrapper.api.get.reset_mock()
+            wrapper.list_resources(resource_type)
+            call_args = wrapper.api.get.call_args
+            assert call_args[0][0] == endpoint, f"{resource_type} -> {endpoint}"
 
-    def test_list_resources_query_params(self):
-        """Test list_resources uses query_params for issues."""
+    def test_list_resources_with_filters(self):
+        """Test list_resources passes filters as params."""
         wrapper = TaigaClientWrapper(host="http://test:9000")
         wrapper.api = MagicMock()
         wrapper.api.auth_token = "test-token"
-        wrapper.api.issues.list.return_value = [{"id": 1}]
-        result = wrapper.list_resources("issues", project_id=123)
-        wrapper.api.issues.list.assert_called_once_with(query_params={"project": 123})
+        wrapper.api.get.return_value = [{"id": 1}]
+        result = wrapper.list_resources("issues", project_id=123, status=2)
+        wrapper.api.get.assert_called_once_with(
+            "/issues",
+            params={"project": 123, "status": 2},
+            headers={"x-disable-pagination": "True"},
+        )
         assert result == [{"id": 1}]
+
+    def test_list_resources_no_project_id(self):
+        """Test list_resources omits project key when project_id is None."""
+        wrapper = TaigaClientWrapper(host="http://test:9000")
+        wrapper.api = MagicMock()
+        wrapper.api.auth_token = "test-token"
+        wrapper.api.get.return_value = [{"id": 1}]
+        wrapper.list_resources("projects")
+        call_params = wrapper.api.get.call_args[1]["params"]
+        assert "project" not in call_params
 
     def test_list_resources_unknown_type(self):
         """Test list_resources raises for unknown resource type."""
         wrapper = TaigaClientWrapper(host="http://test:9000")
         wrapper.api = MagicMock()
         wrapper.api.auth_token = "test-token"
-        wrapper.api.nonexistent = None
         with pytest.raises(ValueError, match="Unknown resource type"):
             wrapper.list_resources("nonexistent")
 

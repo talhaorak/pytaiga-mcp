@@ -7,13 +7,25 @@ from pytaigaclient.exceptions import TaigaException
 
 logger = logging.getLogger(__name__)
 
-# Resources that use the `project=X` keyword argument pattern
-_PROJECT_KWARG_RESOURCES = {"user_stories", "milestones"}
+# Endpoint mapping for all listable resources
+_RESOURCE_ENDPOINTS = {
+    "projects": "/projects",
+    "user_stories": "/userstories",
+    "tasks": "/tasks",
+    "issues": "/issues",
+    "epics": "/epics",
+    "milestones": "/milestones",
+    "wiki": "/wiki",
+    "memberships": "/memberships",
+    "userstory_statuses": "/userstory-statuses",
+    "task_statuses": "/task-statuses",
+    "issue_statuses": "/issue-statuses",
+    "issue_types": "/issue-types",
+    "priorities": "/priorities",
+    "severities": "/severities",
+}
 
-# Resources that require raw API calls due to pytaigaclient bugs
-_RAW_API_RESOURCES = {"tasks"}
-
-# All other resources use query_params={"project": X} pattern
+_NO_PAGINATION_HEADERS = {"x-disable-pagination": "True"}
 
 
 class TaigaClientWrapper:
@@ -80,7 +92,10 @@ class TaigaClientWrapper:
         self, resource_type: str, project_id: Optional[int] = None, **filters
     ) -> List[Dict[str, Any]]:
         """
-        Unified interface for listing resources, hiding pytaigaclient inconsistencies.
+        Unified interface for listing resources via raw API with pagination disabled.
+
+        Uses the x-disable-pagination header to bypass Taiga's default PAGE_SIZE=30
+        limit, ensuring all results are returned in a single request.
 
         Args:
             resource_type: The type of resource (e.g., 'user_stories', 'tasks', 'issues')
@@ -89,34 +104,16 @@ class TaigaClientWrapper:
 
         Returns:
             List of resource dictionaries
-
-        Note:
-            pytaigaclient has inconsistent APIs:
-            - user_stories, milestones use: list(project=X, **filters)
-            - tasks use raw API due to bug: api.get("/tasks", params={...})
-            - issues, epics, etc use: list(query_params={...})
         """
         self._ensure_authenticated()
-
-        if resource_type in _RAW_API_RESOURCES:
-            # Workaround: pytaigaclient Tasks.list passes query_params but
-            # TaigaClient.get expects params - use raw API call
-            # See: https://github.com/talhaorak/pyTaigaClient/issues/XXX
-            params = {"project": project_id, **filters} if project_id else filters
-            endpoint = f"/{resource_type}"
-            return self.api.get(endpoint, params=params)
-
-        resource = getattr(self.api, resource_type, None)
-        if resource is None:
-            raise ValueError(f"Unknown resource type: {resource_type}")
-
-        if resource_type in _PROJECT_KWARG_RESOURCES:
-            # These resources accept project as a keyword argument
-            if project_id:
-                return resource.list(project=project_id, **filters)
-            else:
-                return resource.list(**filters)
-        else:
-            # Default pattern: use query_params dict
-            query = {"project": project_id, **filters} if project_id else filters
-            return resource.list(query_params=query)
+        endpoint = _RESOURCE_ENDPOINTS.get(resource_type)
+        if endpoint is None:
+            raise ValueError(
+                f"Unknown resource type: {resource_type}. Valid: {sorted(_RESOURCE_ENDPOINTS)}"
+            )
+        params = {}
+        if project_id is not None:
+            params["project"] = project_id
+        params.update(filters)
+        result = self.api.get(endpoint, params=params, headers=_NO_PAGINATION_HEADERS)
+        return result if isinstance(result, list) else []
