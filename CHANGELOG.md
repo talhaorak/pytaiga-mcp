@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v1.2.3 (2026-03-16)
+
+### Bug Fixes
+
+- Disable pagination on all list calls via x-disable-pagination header
+  ([`ce35ae4`](https://github.com/TETRA-2023/pytaiga-mcp/commit/ce35ae46fc228633552211c00a6e392d405fa8c1))
+
+
 ## v1.2.2 (2026-03-15)
 
 ### Bug Fixes
