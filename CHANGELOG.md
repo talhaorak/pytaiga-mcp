@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v1.1.1 (2026-03-16)
+
+### Bug Fixes
+
+- **server**: Handle invalid JSON gracefully in _parse_mcp_kwargs
+  ([`355e6a8`](https://github.com/talhaorak/pytaiga-mcp/commit/355e6a8c8da95c209fc72d5d3e214c929ec6fb05))
+
+### Testing
+
+- Add filters key path coverage for _parse_mcp_kwargs
+  ([`30681e5`](https://github.com/talhaorak/pytaiga-mcp/commit/30681e5b0c15c6a8badc95f3619a4df3acb083dc))
+
+
 ## v1.1.0 (2026-03-16)
 
 ### Bug Fixes
