@@ -2226,6 +2226,7 @@ def list_comments(
 
     return _execute_taiga_operation("list_comments", do_list_comments, f"{object_type} {object_id}")
 
+
 # =============================================================================
 # NEW FEATURES — Search, Bulk Ops, Stats, Custom Attrs, History, Watch/Vote,
 #                Wiki Complete, Tags, Roles, Points, Filters, Resolver, Attachments
@@ -2246,7 +2247,9 @@ def search(
 ) -> Dict[str, Any]:
     """Full-text search across all item types in a project."""
     actual_session_id = _get_session_id(session_id)
-    logger.info(f"Executing search in project {project_id} for '{text}', session {actual_session_id[:8]}...")
+    logger.info(
+        f"Executing search in project {project_id} for '{text}', session {actual_session_id[:8]}..."
+    )
     taiga_client_wrapper = _get_authenticated_client(actual_session_id)
 
     return _execute_taiga_operation(
@@ -2273,7 +2276,9 @@ def bulk_create_user_stories(
 ) -> Any:
     """Bulk create user stories. subjects is a newline-separated string of story titles."""
     actual_session_id = _get_session_id(session_id)
-    logger.info(f"Executing bulk_create_user_stories in project {project_id}, session {actual_session_id[:8]}...")
+    logger.info(
+        f"Executing bulk_create_user_stories in project {project_id}, session {actual_session_id[:8]}..."
+    )
     taiga_client_wrapper = _get_authenticated_client(actual_session_id)
 
     payload = {
@@ -2303,7 +2308,9 @@ def bulk_create_tasks(
 ) -> Any:
     """Bulk create tasks. subjects is a newline-separated string of task titles."""
     actual_session_id = _get_session_id(session_id)
-    logger.info(f"Executing bulk_create_tasks in project {project_id}, session {actual_session_id[:8]}...")
+    logger.info(
+        f"Executing bulk_create_tasks in project {project_id}, session {actual_session_id[:8]}..."
+    )
     taiga_client_wrapper = _get_authenticated_client(actual_session_id)
 
     payload = {
@@ -2334,7 +2341,9 @@ def bulk_create_epics(
 ) -> Any:
     """Bulk create epics. subjects is a newline-separated string of epic titles."""
     actual_session_id = _get_session_id(session_id)
-    logger.info(f"Executing bulk_create_epics in project {project_id}, session {actual_session_id[:8]}...")
+    logger.info(
+        f"Executing bulk_create_epics in project {project_id}, session {actual_session_id[:8]}..."
+    )
     taiga_client_wrapper = _get_authenticated_client(actual_session_id)
 
     payload = {
@@ -2363,7 +2372,9 @@ def bulk_update_story_sprint(
 ) -> Any:
     """Move stories to a sprint. story_ids is a comma-separated string of user story IDs."""
     actual_session_id = _get_session_id(session_id)
-    logger.info(f"Executing bulk_update_story_sprint in project {project_id}, session {actual_session_id[:8]}...")
+    logger.info(
+        f"Executing bulk_update_story_sprint in project {project_id}, session {actual_session_id[:8]}..."
+    )
     taiga_client_wrapper = _get_authenticated_client(actual_session_id)
 
     ids = [int(x.strip()) for x in story_ids.split(",") if x.strip()]
@@ -2393,7 +2404,9 @@ def get_project_stats(
 ) -> Dict[str, Any]:
     """Retrieves detailed project statistics."""
     actual_session_id = _get_session_id(session_id)
-    logger.info(f"Executing get_project_stats for project {project_id}, session {actual_session_id[:8]}...")
+    logger.info(
+        f"Executing get_project_stats for project {project_id}, session {actual_session_id[:8]}..."
+    )
     taiga_client_wrapper = _get_authenticated_client(actual_session_id)
 
     return _execute_taiga_operation(
@@ -2413,7 +2426,9 @@ def get_project_issue_stats(
 ) -> Dict[str, Any]:
     """Retrieves project issue statistics."""
     actual_session_id = _get_session_id(session_id)
-    logger.info(f"Executing get_project_issue_stats for project {project_id}, session {actual_session_id[:8]}...")
+    logger.info(
+        f"Executing get_project_issue_stats for project {project_id}, session {actual_session_id[:8]}..."
+    )
     taiga_client_wrapper = _get_authenticated_client(actual_session_id)
 
     return _execute_taiga_operation(
@@ -2433,7 +2448,9 @@ def get_milestone_stats(
 ) -> Dict[str, Any]:
     """Retrieves milestone/sprint statistics including burndown data."""
     actual_session_id = _get_session_id(session_id)
-    logger.info(f"Executing get_milestone_stats for milestone {milestone_id}, session {actual_session_id[:8]}...")
+    logger.info(
+        f"Executing get_milestone_stats for milestone {milestone_id}, session {actual_session_id[:8]}..."
+    )
     taiga_client_wrapper = _get_authenticated_client(actual_session_id)
 
     return _execute_taiga_operation(
@@ -2457,7 +2474,9 @@ def list_custom_attributes(
 ) -> Any:
     """List custom attribute definitions for a resource type in a project."""
     if object_type not in _CUSTOM_ATTR_API_PATH:
-        raise ValueError(f"Invalid object_type '{object_type}'. Must be one of: {', '.join(sorted(_CUSTOM_ATTR_API_PATH.keys()))}")
+        raise ValueError(
+            f"Invalid object_type '{object_type}'. Must be one of: {', '.join(sorted(_CUSTOM_ATTR_API_PATH.keys()))}"
+        )
     actual_session_id = _get_session_id(session_id)
     taiga_client_wrapper = _get_authenticated_client(actual_session_id)
     attr_path, _ = _CUSTOM_ATTR_API_PATH[object_type]
@@ -2480,7 +2499,9 @@ def get_custom_attribute_values(
 ) -> Any:
     """Get the custom attribute values for a specific item."""
     if object_type not in _CUSTOM_ATTR_API_PATH:
-        raise ValueError(f"Invalid object_type '{object_type}'. Must be one of: {', '.join(sorted(_CUSTOM_ATTR_API_PATH.keys()))}")
+        raise ValueError(
+            f"Invalid object_type '{object_type}'. Must be one of: {', '.join(sorted(_CUSTOM_ATTR_API_PATH.keys()))}"
+        )
     actual_session_id = _get_session_id(session_id)
     taiga_client_wrapper = _get_authenticated_client(actual_session_id)
     _, values_path = _CUSTOM_ATTR_API_PATH[object_type]
@@ -2494,7 +2515,7 @@ def get_custom_attribute_values(
 
 @mcp.tool(
     "set_custom_attribute_values",
-    description="Set custom attribute values for a specific item. Provide attributes_values as a JSON string mapping attribute IDs to values, e.g. '{\"123\": \"high\", \"456\": 42}'. Uses default session if session_id not provided.",
+    description='Set custom attribute values for a specific item. Provide attributes_values as a JSON string mapping attribute IDs to values, e.g. \'{"123": "high", "456": 42}\'. Uses default session if session_id not provided.',
 )
 def set_custom_attribute_values(
     object_id: int,
@@ -2505,7 +2526,9 @@ def set_custom_attribute_values(
 ) -> Any:
     """Set custom attribute values. attributes_values is a JSON string."""
     if object_type not in _CUSTOM_ATTR_API_PATH:
-        raise ValueError(f"Invalid object_type '{object_type}'. Must be one of: {', '.join(sorted(_CUSTOM_ATTR_API_PATH.keys()))}")
+        raise ValueError(
+            f"Invalid object_type '{object_type}'. Must be one of: {', '.join(sorted(_CUSTOM_ATTR_API_PATH.keys()))}"
+        )
     actual_session_id = _get_session_id(session_id)
     taiga_client_wrapper = _get_authenticated_client(actual_session_id)
     _, values_path = _CUSTOM_ATTR_API_PATH[object_type]
@@ -2541,7 +2564,9 @@ def get_history(
 ) -> Any:
     """Get change history for an item."""
     if object_type not in _HISTORY_API_PATH:
-        raise ValueError(f"Invalid object_type '{object_type}'. Must be one of: {', '.join(sorted(_HISTORY_API_PATH.keys()))}")
+        raise ValueError(
+            f"Invalid object_type '{object_type}'. Must be one of: {', '.join(sorted(_HISTORY_API_PATH.keys()))}"
+        )
     actual_session_id = _get_session_id(session_id)
     taiga_client_wrapper = _get_authenticated_client(actual_session_id)
     history_path = _HISTORY_API_PATH[object_type]
@@ -2564,12 +2589,16 @@ def get_project_timeline(
 ) -> Any:
     """Get the activity timeline for a project."""
     actual_session_id = _get_session_id(session_id)
-    logger.info(f"Executing get_project_timeline for project {project_id}, session {actual_session_id[:8]}...")
+    logger.info(
+        f"Executing get_project_timeline for project {project_id}, session {actual_session_id[:8]}..."
+    )
     taiga_client_wrapper = _get_authenticated_client(actual_session_id)
 
     return _execute_taiga_operation(
         "get_project_timeline",
-        lambda: taiga_client_wrapper.api.get(f"/timeline/project/{project_id}", params={"page": page}),
+        lambda: taiga_client_wrapper.api.get(
+            f"/timeline/project/{project_id}", params={"page": page}
+        ),
         f"project {project_id}",
     )
 
@@ -2585,7 +2614,9 @@ def get_user_timeline(
 ) -> Any:
     """Get the activity timeline for a user."""
     actual_session_id = _get_session_id(session_id)
-    logger.info(f"Executing get_user_timeline for user {user_id}, session {actual_session_id[:8]}...")
+    logger.info(
+        f"Executing get_user_timeline for user {user_id}, session {actual_session_id[:8]}..."
+    )
     taiga_client_wrapper = _get_authenticated_client(actual_session_id)
 
     return _execute_taiga_operation(
@@ -2609,7 +2640,9 @@ def watch_item(
 ) -> Dict[str, Any]:
     """Watch an item for notifications."""
     if object_type not in _WATCHABLE_TYPES:
-        raise ValueError(f"Invalid object_type '{object_type}'. Must be one of: {', '.join(sorted(_WATCHABLE_TYPES))}")
+        raise ValueError(
+            f"Invalid object_type '{object_type}'. Must be one of: {', '.join(sorted(_WATCHABLE_TYPES))}"
+        )
     actual_session_id = _get_session_id(session_id)
     taiga_client_wrapper = _get_authenticated_client(actual_session_id)
     api_path = _WATCH_API_PATH[object_type]
@@ -2633,7 +2666,9 @@ def unwatch_item(
 ) -> Dict[str, Any]:
     """Stop watching an item."""
     if object_type not in _WATCHABLE_TYPES:
-        raise ValueError(f"Invalid object_type '{object_type}'. Must be one of: {', '.join(sorted(_WATCHABLE_TYPES))}")
+        raise ValueError(
+            f"Invalid object_type '{object_type}'. Must be one of: {', '.join(sorted(_WATCHABLE_TYPES))}"
+        )
     actual_session_id = _get_session_id(session_id)
     taiga_client_wrapper = _get_authenticated_client(actual_session_id)
     api_path = _WATCH_API_PATH[object_type]
@@ -2657,7 +2692,9 @@ def upvote_item(
 ) -> Dict[str, Any]:
     """Upvote an item."""
     if object_type not in _VOTABLE_TYPES:
-        raise ValueError(f"Invalid object_type '{object_type}'. Must be one of: {', '.join(sorted(_VOTABLE_TYPES))}")
+        raise ValueError(
+            f"Invalid object_type '{object_type}'. Must be one of: {', '.join(sorted(_VOTABLE_TYPES))}"
+        )
     actual_session_id = _get_session_id(session_id)
     taiga_client_wrapper = _get_authenticated_client(actual_session_id)
     api_path = _ITEM_API_PATH[object_type]
@@ -2681,7 +2718,9 @@ def downvote_item(
 ) -> Dict[str, Any]:
     """Remove your vote from an item."""
     if object_type not in _VOTABLE_TYPES:
-        raise ValueError(f"Invalid object_type '{object_type}'. Must be one of: {', '.join(sorted(_VOTABLE_TYPES))}")
+        raise ValueError(
+            f"Invalid object_type '{object_type}'. Must be one of: {', '.join(sorted(_VOTABLE_TYPES))}"
+        )
     actual_session_id = _get_session_id(session_id)
     taiga_client_wrapper = _get_authenticated_client(actual_session_id)
     api_path = _ITEM_API_PATH[object_type]
@@ -2866,7 +2905,9 @@ def delete_project_tag(
 
     _execute_taiga_operation(
         "delete_project_tag",
-        lambda: taiga_client_wrapper.api.post(f"/projects/{project_id}/delete_tag", json={"tag": tag}),
+        lambda: taiga_client_wrapper.api.post(
+            f"/projects/{project_id}/delete_tag", json={"tag": tag}
+        ),
         f"project {project_id}, tag '{tag}'",
     )
     return {"status": "deleted", "tag": tag, "project_id": project_id}
@@ -2927,14 +2968,18 @@ def get_filters_data(
 ) -> Any:
     """Get available filter options for a resource type."""
     if object_type not in _FILTERS_API_PATH:
-        raise ValueError(f"Invalid object_type '{object_type}'. Must be one of: {', '.join(sorted(_FILTERS_API_PATH.keys()))}")
+        raise ValueError(
+            f"Invalid object_type '{object_type}'. Must be one of: {', '.join(sorted(_FILTERS_API_PATH.keys()))}"
+        )
     actual_session_id = _get_session_id(session_id)
     taiga_client_wrapper = _get_authenticated_client(actual_session_id)
     api_path = _FILTERS_API_PATH[object_type]
 
     return _execute_taiga_operation(
         "get_filters_data",
-        lambda: taiga_client_wrapper.api.get(f"/{api_path}/filters_data", params={"project": project_id}),
+        lambda: taiga_client_wrapper.api.get(
+            f"/{api_path}/filters_data", params={"project": project_id}
+        ),
         f"{object_type} in project {project_id}",
     )
 
@@ -2996,7 +3041,9 @@ def list_attachments(
 ) -> Any:
     """List attachments for an item."""
     if object_type not in _ATTACHMENT_API_PATH:
-        raise ValueError(f"Invalid object_type '{object_type}'. Must be one of: {', '.join(sorted(_ATTACHMENT_API_PATH.keys()))}")
+        raise ValueError(
+            f"Invalid object_type '{object_type}'. Must be one of: {', '.join(sorted(_ATTACHMENT_API_PATH.keys()))}"
+        )
     actual_session_id = _get_session_id(session_id)
     taiga_client_wrapper = _get_authenticated_client(actual_session_id)
     api_path = _ATTACHMENT_API_PATH[object_type]
@@ -3022,7 +3069,9 @@ def delete_attachment(
 ) -> Dict[str, Any]:
     """Delete an attachment."""
     if object_type not in _ATTACHMENT_API_PATH:
-        raise ValueError(f"Invalid object_type '{object_type}'. Must be one of: {', '.join(sorted(_ATTACHMENT_API_PATH.keys()))}")
+        raise ValueError(
+            f"Invalid object_type '{object_type}'. Must be one of: {', '.join(sorted(_ATTACHMENT_API_PATH.keys()))}"
+        )
     actual_session_id = _get_session_id(session_id)
     taiga_client_wrapper = _get_authenticated_client(actual_session_id)
     api_path = _ATTACHMENT_API_PATH[object_type]
