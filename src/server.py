@@ -1968,8 +1968,8 @@ def invite_project_user(
         raise ValueError("Email cannot be empty.")
 
     def do_invite():
-        result = taiga_client_wrapper.api.memberships.invite(
-            project=project_id, email=email, role_id=role_id
+        result = taiga_client_wrapper.api.memberships.create(
+            project=project_id, email=email, role=role_id
         )
         return (
             result

@@ -1038,15 +1038,15 @@ class TestTaigaTools:
     def test_invite_project_user(self, session_setup):
         """Test invite_project_user."""
         session_id, mock_client = session_setup
-        mock_client.api.memberships.invite.return_value = {
+        mock_client.api.memberships.create.return_value = {
             "id": 50,
             "email": "user@test.com",
             "role": 5,
         }
         result = src.server.invite_project_user(123, "user@test.com", 5, session_id)
         assert result["email"] == "user@test.com"
-        mock_client.api.memberships.invite.assert_called_once_with(
-            project=123, email="user@test.com", role_id=5
+        mock_client.api.memberships.create.assert_called_once_with(
+            project=123, email="user@test.com", role=5
         )
 
     def test_invite_project_user_empty_email(self, session_setup):
