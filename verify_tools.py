@@ -4,42 +4,41 @@ Comprehensive verification script for Taiga MCP tools.
 Tests the full lifecycle (Create-Read-Update-Delete) of major resources.
 """
 
+import logging
 import os
 import uuid
-import logging
+
 from src.config import settings
 from src.server import (
-    login,
-    list_projects,
-    get_project,
-    # User Stories
-    create_user_story,
-    get_user_story,
-    update_user_story,
-    delete_user_story,
-    # Tasks
-    create_task,
-    get_task,
-    update_task,
-    delete_task,
     # Epics
     create_epic,
-    get_epic,
-    update_epic,
-    delete_epic,
-    link_user_story_to_epic,
     # Issues
     create_issue,
-    get_issue,
-    update_issue,
+    # Tasks
+    create_task,
+    # User Stories
+    create_user_story,
+    delete_epic,
     delete_issue,
-    get_issue_statuses,
+    delete_task,
+    delete_user_story,
+    get_epic,
     get_issue_priorities,
     get_issue_severities,
+    get_issue_statuses,
     get_issue_types,
+    get_task,
+    get_user_story,
+    link_user_story_to_epic,
     # Milestones/Wiki
     list_milestones,
+    list_projects,
     list_wiki_pages,
+    login,
+    update_epic,
+    update_issue,
+    update_task,
+    update_user_story,
 )
 
 # Setup logging
@@ -70,13 +69,13 @@ def run_verification():
         if not projects:
             print("❌ No projects found. Cannot proceed.")
             return
-        
+
         # Prefer Project ID 10 (known working), otherwise avoid corrupted ID 9
         # Fallback to first available if 10 not found and others are valid
         project = next((p for p in projects if p["id"] == 10), None)
         if not project:
-             project = next((p for p in projects if p["id"] != 9), projects[0])
-             
+            project = next((p for p in projects if p["id"] != 9), projects[0])
+
         pid = project["id"]
         print(f"✅ Found project: {project['name']} (ID: {pid})")
     except Exception as e:

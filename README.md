@@ -7,10 +7,11 @@
 # Taiga MCP Bridge
 
 
-[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
+[![GHCR](https://img.shields.io/badge/ghcr.io-tetra--2023%2Fpytaiga--mcp-blue?logo=docker)](https://ghcr.io/tetra-2023/pytaiga-mcp)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
-[![CI](https://github.com/talhaorak/pytaiga-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/talhaorak/pytaiga-mcp/actions/workflows/ci.yml)  
-[!["Buy Me A Coffee"](https://www.buymeacoffee.com/assets/img/custom_images/orange_img.png)](buymeacoffee.com/talhao)
+
+> **Community fork** of [talhaorak/pytaiga-mcp](https://github.com/talhaorak/pytaiga-mcp) with additional features, CI/CD, and ongoing maintenance.
 
 ## Overview
 
@@ -70,15 +71,15 @@ This project uses [uv](https://github.com/astral-sh/uv) for fast, reliable Pytho
 
 ### Prerequisites
 
-- Python 3.10 or higher
+- Python 3.12 or higher
 - uv package manager
 
 ### Basic Installation
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-org/pyTaigaMCP.git
-cd pyTaigaMCP
+git clone https://github.com/TETRA-2023/pytaiga-mcp.git
+cd pytaiga-mcp
 
 # Install dependencies
 ./install.sh
@@ -103,6 +104,62 @@ uv pip install -e .
 # With development dependencies
 uv pip install -e ".[dev]"
 ```
+
+### Docker
+
+Pull the pre-built image from GHCR:
+
+```bash
+docker pull ghcr.io/tetra-2023/pytaiga-mcp:latest
+```
+
+Or build locally:
+
+```bash
+docker build -t pytaiga-mcp .
+```
+
+Run with environment variables:
+
+```bash
+docker run -i --rm \
+  -e TAIGA_API_URL=https://your-taiga-instance.com \
+  -e TAIGA_USERNAME=your_username \
+  -e TAIGA_PASSWORD=your_password \
+  ghcr.io/tetra-2023/pytaiga-mcp:latest
+```
+
+To use SSE transport instead of stdio, append `--sse`:
+
+```bash
+docker run --rm \
+  -e TAIGA_API_URL=https://your-taiga-instance.com \
+  -e TAIGA_USERNAME=your_username \
+  -e TAIGA_PASSWORD=your_password \
+  -p 8000:8000 \
+  ghcr.io/tetra-2023/pytaiga-mcp:latest --sse
+```
+
+Example MCP client configuration (`.mcp.json`) for stdio transport:
+
+```json
+{
+  "mcpServers": {
+    "taigaApi": {
+      "command": "docker",
+      "args": [
+        "run", "-i", "--rm",
+        "-e", "TAIGA_API_URL",
+        "-e", "TAIGA_USERNAME",
+        "-e", "TAIGA_PASSWORD",
+        "ghcr.io/tetra-2023/pytaiga-mcp:latest"
+      ]
+    }
+  }
+}
+```
+
+> **Note**: Use `-i` (interactive) without `-t` (pseudo-TTY) for stdio transport. The `-e VAR` form (without `=value`) forwards the variable from your host environment.
 
 ## Configuration
 
@@ -302,7 +359,7 @@ client.call_tool("logout", {"session_id": session_id})
 ### Project Structure
 
 ```
-pyTaigaMCP/
+pytaiga-mcp/
 ├── src/
 │   ├── server.py          # MCP server implementation with tools
 │   ├── taiga_client.py    # Taiga API client wrapper
@@ -310,6 +367,10 @@ pyTaigaMCP/
 ├── tests/
 │   ├── test_server.py     # Unit tests
 │   └── test_integration.py # Integration tests
+├── .github/workflows/
+│   └── ci.yml             # CI pipeline (test, lint, Docker, release)
+├── .pre-commit-config.yaml # Pre-commit hooks (ruff, pytest)
+├── Dockerfile             # Container image definition
 ├── pyproject.toml         # Project configuration and dependencies
 ├── install.sh             # Installation script
 ├── run.sh                 # Server execution script
@@ -318,14 +379,17 @@ pyTaigaMCP/
 
 ### Testing
 
-Run tests with pytest:
+Pre-commit hooks run automatically on each commit (ruff lint, ruff format, unit tests). To run manually:
 
 ```bash
-# Run all tests
-pytest
+# Run pre-commit hooks on all files
+uv run pre-commit run --all-files
+
+# Run tests directly
+uv run pytest tests/test_server.py -v --tb=short
 
 # Run with coverage reporting
-pytest --cov=src
+uv run pytest --cov=src
 ```
 
 ### Debugging and Inspection
@@ -371,9 +435,9 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 1. Fork the repository
 2. Create your feature branch (`git checkout -b feature/amazing-feature`)
 3. Install development dependencies (`./install.sh --dev`)
-4. Make your changes
-5. Run tests (`pytest`)
-6. Commit your changes (`git commit -m 'Add some amazing feature'`)
+4. Set up pre-commit hooks (`uv run pre-commit install`)
+5. Make your changes
+6. Commit your changes — pre-commit hooks will run linting and tests automatically
 7. Push to the branch (`git push origin feature/amazing-feature`)
 8. Open a Pull Request
 
