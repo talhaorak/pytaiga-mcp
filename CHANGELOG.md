@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v2.0.1 (2026-03-17)
+
+### Bug Fixes
+
+- Use memberships.create() instead of removed .invite() API
+  ([`4e50c81`](https://github.com/talhaorak/pytaiga-mcp/commit/4e50c817112359c511fa2d0b9fc14f9d1d5e844e))
+
+### Code Style
+
+- Format server.py with ruff
+  ([`5c36b90`](https://github.com/talhaorak/pytaiga-mcp/commit/5c36b9079304cd30a917ff9f8d66c4058108643f))
+
+
 ## v2.0.0 (2026-03-17)
 ### Major Release — 32 New Tools (62 → 94 total)
 ### New Features
