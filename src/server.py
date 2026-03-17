@@ -42,7 +42,15 @@ def _parse_mcp_kwargs(kwargs: dict) -> dict:
         if key in ("kwargs", "filters"):
             val = kwargs[key]
             if isinstance(val, str):
-                return json.loads(val) if val else {}
+                if not val:
+                    return {}
+                try:
+                    return json.loads(val)
+                except json.JSONDecodeError as e:
+                    raise ValueError(
+                        f"Invalid JSON in '{key}' parameter: {e}. "
+                        "Please use valid JSON format (e.g., double-quoted strings, no trailing commas)."
+                    ) from e
             return val if isinstance(val, dict) else {}
     return kwargs
 
@@ -150,6 +158,79 @@ ALLOWED_KWARGS: Dict[str, set] = {
         "slug",
         "content",
     },
+}
+
+# --- Comment Type Mapping ---
+# Maps user-facing type names to (patch_path_segment, history_path_segment)
+_COMMENT_TYPE_MAP = {
+    "issue": ("issues", "issue"),
+    "task": ("tasks", "task"),
+    "user_story": ("userstories", "userstory"),
+    "userstory": ("userstories", "userstory"),
+    "epic": ("epics", "epic"),
+}
+
+# --- Item Type Mappings for generic tools ---
+# Maps user-facing type names to API path segments
+_ITEM_API_PATH = {
+    "user_story": "userstories",
+    "userstory": "userstories",
+    "task": "tasks",
+    "issue": "issues",
+    "epic": "epics",
+}
+
+# Types that support watch/unwatch
+_WATCHABLE_TYPES = {"user_story", "userstory", "task", "issue", "epic", "milestone", "wiki_page"}
+_WATCH_API_PATH = {
+    "user_story": "userstories",
+    "userstory": "userstories",
+    "task": "tasks",
+    "issue": "issues",
+    "epic": "epics",
+    "milestone": "milestones",
+    "wiki_page": "wiki",
+}
+
+# Types that support upvote/downvote
+_VOTABLE_TYPES = {"user_story", "userstory", "task", "issue", "epic"}
+
+# Attachment path mapping
+_ATTACHMENT_API_PATH = {
+    "user_story": "userstories",
+    "userstory": "userstories",
+    "task": "tasks",
+    "issue": "issues",
+    "epic": "epics",
+    "wiki_page": "wiki",
+}
+
+# History path mapping
+_HISTORY_API_PATH = {
+    "user_story": "userstory",
+    "userstory": "userstory",
+    "task": "task",
+    "issue": "issue",
+    "epic": "epic",
+    "wiki_page": "wiki",
+}
+
+# Custom attribute path mapping
+_CUSTOM_ATTR_API_PATH = {
+    "user_story": ("userstory-custom-attributes", "userstories/custom-attributes-values"),
+    "userstory": ("userstory-custom-attributes", "userstories/custom-attributes-values"),
+    "task": ("task-custom-attributes", "tasks/custom-attributes-values"),
+    "issue": ("issue-custom-attributes", "issues/custom-attributes-values"),
+    "epic": ("epic-custom-attributes", "epics/custom-attributes-values"),
+}
+
+# Filters data path mapping
+_FILTERS_API_PATH = {
+    "user_story": "userstories",
+    "userstory": "userstories",
+    "task": "tasks",
+    "issue": "issues",
+    "epic": "epics",
 }
 
 # --- Response Field Filtering ---
@@ -494,6 +575,35 @@ def _filter_response(response, resource_type: str, verbosity: str = "standard"):
     return filter_dict(response)
 
 
+def _get_item_by_ref(
+    item_type: str,
+    api_collection_name: str,
+    project_id: int,
+    ref: int,
+    session_id: Optional[str],
+    verbosity: str,
+) -> Dict[str, Any]:
+    """Generic helper to retrieve a Taiga item by its ref number."""
+    actual_session_id = _get_session_id(session_id)
+    logger.info(
+        f"Executing get_{item_type}_by_ref ref #{ref} in project {project_id} for session {actual_session_id[:8]}..."
+    )
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
+    api_collection = getattr(taiga_client_wrapper.api, api_collection_name)
+
+    item_label = item_type.replace("_", " ")
+    result = _execute_taiga_operation(
+        f"get_{item_type}_by_ref",
+        lambda: api_collection.get_by_ref(ref=ref, project=project_id),
+        f"{item_label} ref #{ref} in project {project_id}",
+    )
+    if not result:
+        raise ValueError(
+            f"{item_label.capitalize()} with ref #{ref} not found in project {project_id}"
+        )
+    return _filter_response(result, item_type, verbosity)
+
+
 # --- MCP Tools ---
 
 
@@ -564,7 +674,14 @@ def login(
             new_session_id = str(uuid.uuid4())
             # Store the authenticated wrapper in our manual session store
             active_sessions[new_session_id] = wrapper
-            logger.info("Login successful. Session created.")
+            # Set as default session if none exists yet
+            if DEFAULT_SESSION_ID not in active_sessions:
+                active_sessions[DEFAULT_SESSION_ID] = wrapper
+                logger.info(
+                    f"Login successful. Session created and set as default: '{DEFAULT_SESSION_ID}'"
+                )
+            else:
+                logger.info("Login successful. Session created.")
             # Return the session ID to the client
             return {"session_id": new_session_id}
         else:
@@ -649,7 +766,7 @@ def get_project_by_slug(
 
     result = _execute_taiga_operation(
         "get_project_by_slug",
-        lambda: taiga_client_wrapper.api.projects.get(slug=slug),
+        lambda: taiga_client_wrapper.api.projects.get_by_slug(slug=slug),
         f"slug '{slug}'",
     )
     return _filter_response(result, "project", verbosity)
@@ -756,12 +873,12 @@ def delete_project(project_id: int, session_id: Optional[str] = None) -> Dict[st
 
 
 # --- User Story Tools ---
-# Note: get_project_roles, get_*_by_ref functions not implemented - not supported by pytaigaclient
+# Note: get_project_roles not implemented - not supported by pytaigaclient
 
 
 @mcp.tool(
     "list_user_stories",
-    description="Lists user stories within a specific project, optionally filtered. verbosity: 'minimal' (id/ref/subject/status/project), 'standard' (default), 'full'. Uses default session if session_id not provided.",
+    description="Lists user stories within a specific project, optionally filtered. Results include both 'id' (internal, use for get/update/delete) and 'ref' (human-readable '#N' shown in Taiga UI). verbosity: 'minimal' (id/ref/subject/status/project), 'standard' (default), 'full'. Uses default session if session_id not provided.",
 )
 def list_user_stories(
     project_id: int,
@@ -818,7 +935,7 @@ def create_user_story(
 
 @mcp.tool(
     "get_user_story",
-    description="Gets detailed information about a specific user story by its ID. verbosity: 'minimal', 'standard' (default), 'full'. Uses default session if session_id not provided.",
+    description="Gets detailed information about a specific user story by its internal ID (not the ref number shown in Taiga UI). Use get_user_story_by_ref if you have the '#N' reference number instead. verbosity: 'minimal', 'standard' (default), 'full'. Uses default session if session_id not provided.",
 )
 def get_user_story(
     user_story_id: int, session_id: Optional[str] = None, verbosity: str = "standard"
@@ -836,6 +953,17 @@ def get_user_story(
         f"user story {user_story_id}",
     )
     return _filter_response(result, "user_story", verbosity)
+
+
+@mcp.tool(
+    "get_user_story_by_ref",
+    description="Gets a user story by its human-readable reference number (the '#N' shown in Taiga UI). Requires the project_id. Use this instead of get_user_story when you have a ref number. verbosity: 'minimal', 'standard' (default), 'full'. Uses default session if session_id not provided.",
+)
+def get_user_story_by_ref(
+    project_id: int, ref: int, session_id: Optional[str] = None, verbosity: str = "standard"
+) -> Dict[str, Any]:
+    """Retrieves user story details by ref number within a project."""
+    return _get_item_by_ref("user_story", "user_stories", project_id, ref, session_id, verbosity)
 
 
 @mcp.tool(
@@ -962,7 +1090,7 @@ def get_user_story_statuses(
 
 @mcp.tool(
     "list_tasks",
-    description="Lists tasks within a specific project, optionally filtered. verbosity: 'minimal' (id/ref/subject/status/project), 'standard' (default), 'full'. Uses default session if session_id not provided.",
+    description="Lists tasks within a specific project, optionally filtered. Results include both 'id' (internal, use for get/update/delete) and 'ref' (human-readable '#N' shown in Taiga UI). verbosity: 'minimal' (id/ref/subject/status/project), 'standard' (default), 'full'. Uses default session if session_id not provided.",
 )
 def list_tasks(
     project_id: int,
@@ -1023,7 +1151,7 @@ def create_task(
 
 @mcp.tool(
     "get_task",
-    description="Gets detailed information about a specific task by its ID. verbosity: 'minimal', 'standard' (default), 'full'. Uses default session if session_id not provided.",
+    description="Gets detailed information about a specific task by its internal ID (not the ref number shown in Taiga UI). Use get_task_by_ref if you have the '#N' reference number instead. verbosity: 'minimal', 'standard' (default), 'full'. Uses default session if session_id not provided.",
 )
 def get_task(
     task_id: int, session_id: Optional[str] = None, verbosity: str = "standard"
@@ -1036,6 +1164,34 @@ def get_task(
     result = _execute_taiga_operation(
         "get_task", lambda: taiga_client_wrapper.api.tasks.get(task_id), f"task {task_id}"
     )
+    return _filter_response(result, "task", verbosity)
+
+
+@mcp.tool(
+    "get_task_by_ref",
+    description="Gets a task by its human-readable reference number (the '#N' shown in Taiga UI). Requires the project_id. Use this instead of get_task when you have a ref number. verbosity: 'minimal', 'standard' (default), 'full'. Uses default session if session_id not provided.",
+)
+def get_task_by_ref(
+    project_id: int, ref: int, session_id: Optional[str] = None, verbosity: str = "standard"
+) -> Dict[str, Any]:
+    """Retrieves task details by ref number within a project."""
+    actual_session_id = _get_session_id(session_id)
+    logger.info(
+        f"Executing get_task_by_ref ref #{ref} in project {project_id} for session {actual_session_id[:8]}..."
+    )
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
+
+    # Workaround: pytaigaclient Tasks.get_by_ref has a bug - passes query_params but
+    # TaigaClient.get expects params. Use the underlying get method directly.
+    result = _execute_taiga_operation(
+        "get_task_by_ref",
+        lambda: taiga_client_wrapper.api.get(
+            "/tasks/by_ref", params={"ref": ref, "project": project_id}
+        ),
+        f"task ref #{ref} in project {project_id}",
+    )
+    if not result:
+        raise ValueError(f"Task with ref #{ref} not found in project {project_id}")
     return _filter_response(result, "task", verbosity)
 
 
@@ -1151,7 +1307,7 @@ def get_task_statuses(project_id: int, session_id: Optional[str] = None) -> List
 
 @mcp.tool(
     "list_issues",
-    description="Lists issues within a specific project, optionally filtered. verbosity: 'minimal' (id/ref/subject/status/priority/severity/project), 'standard' (default), 'full'. Uses default session if session_id not provided.",
+    description="Lists issues within a specific project, optionally filtered. Results include both 'id' (internal, use for get/update/delete) and 'ref' (human-readable '#N' shown in Taiga UI). verbosity: 'minimal' (id/ref/subject/status/priority/severity/project), 'standard' (default), 'full'. Uses default session if session_id not provided.",
 )
 def list_issues(
     project_id: int,
@@ -1222,7 +1378,7 @@ def create_issue(
 
 @mcp.tool(
     "get_issue",
-    description="Gets detailed information about a specific issue by its ID. verbosity: 'minimal', 'standard' (default), 'full'. Uses default session if session_id not provided.",
+    description="Gets detailed information about a specific issue by its internal ID (not the ref number shown in Taiga UI). Use get_issue_by_ref if you have the '#N' reference number instead. verbosity: 'minimal', 'standard' (default), 'full'. Uses default session if session_id not provided.",
 )
 def get_issue(
     issue_id: int, session_id: Optional[str] = None, verbosity: str = "standard"
@@ -1238,6 +1394,17 @@ def get_issue(
         f"issue {issue_id}",
     )
     return _filter_response(result, "issue", verbosity)
+
+
+@mcp.tool(
+    "get_issue_by_ref",
+    description="Gets an issue by its human-readable reference number (the '#N' shown in Taiga UI). Requires the project_id. Use this instead of get_issue when you have a ref number. verbosity: 'minimal', 'standard' (default), 'full'. Uses default session if session_id not provided.",
+)
+def get_issue_by_ref(
+    project_id: int, ref: int, session_id: Optional[str] = None, verbosity: str = "standard"
+) -> Dict[str, Any]:
+    """Retrieves issue details by ref number within a project."""
+    return _get_item_by_ref("issue", "issues", project_id, ref, session_id, verbosity)
 
 
 @mcp.tool(
@@ -1409,7 +1576,7 @@ def get_issue_types(project_id: int, session_id: Optional[str] = None) -> List[D
 
 @mcp.tool(
     "list_epics",
-    description="Lists epics within a specific project, optionally filtered. verbosity: 'minimal' (id/ref/subject/status/project), 'standard' (default), 'full'. Uses default session if session_id not provided.",
+    description="Lists epics within a specific project, optionally filtered. Results include both 'id' (internal, use for get/update/delete) and 'ref' (human-readable '#N' shown in Taiga UI). verbosity: 'minimal' (id/ref/subject/status/project), 'standard' (default), 'full'. Uses default session if session_id not provided.",
 )
 def list_epics(
     project_id: int,
@@ -1468,7 +1635,7 @@ def create_epic(
 
 @mcp.tool(
     "get_epic",
-    description="Gets detailed information about a specific epic by its ID. verbosity: 'minimal', 'standard' (default), 'full'. Uses default session if session_id not provided.",
+    description="Gets detailed information about a specific epic by its internal ID (not the ref number shown in Taiga UI). Use get_epic_by_ref if you have the '#N' reference number instead. verbosity: 'minimal', 'standard' (default), 'full'. Uses default session if session_id not provided.",
 )
 def get_epic(
     epic_id: int, session_id: Optional[str] = None, verbosity: str = "standard"
@@ -1482,6 +1649,17 @@ def get_epic(
         "get_epic", lambda: taiga_client_wrapper.api.epics.get(epic_id), f"epic {epic_id}"
     )
     return _filter_response(result, "epic", verbosity)
+
+
+@mcp.tool(
+    "get_epic_by_ref",
+    description="Gets an epic by its human-readable reference number (the '#N' shown in Taiga UI). Requires the project_id. Use this instead of get_epic when you have a ref number. verbosity: 'minimal', 'standard' (default), 'full'. Uses default session if session_id not provided.",
+)
+def get_epic_by_ref(
+    project_id: int, ref: int, session_id: Optional[str] = None, verbosity: str = "standard"
+) -> Dict[str, Any]:
+    """Retrieves epic details by ref number within a project."""
+    return _get_item_by_ref("epic", "epics", project_id, ref, session_id, verbosity)
 
 
 @mcp.tool(
@@ -1952,6 +2130,909 @@ def session_status(session_id: Optional[str] = None) -> Dict[str, Any]:
     else:  # Session ID not found
         logger.debug(f"Session {actual_session_id[:8]} not found.")
         return {"status": "inactive", "reason": "not_found", "session_id": actual_session_id}
+
+
+# --- Comment Tools ---
+
+
+@mcp.tool()
+def add_comment(
+    object_id: int,
+    object_type: str,
+    comment: str,
+    session_id: Optional[str] = None,
+) -> dict:
+    """Add a comment to a Taiga object (issue, task, user_story, or epic).
+
+    Args:
+        object_id: The ID of the object to comment on
+        object_type: Type of object: 'issue', 'task', 'user_story', 'userstory', or 'epic'
+        comment: The comment text to add
+        session_id: Optional session ID (uses default if not provided)
+
+    Returns:
+        dict with status confirmation
+    """
+    if object_type not in _COMMENT_TYPE_MAP:
+        raise ValueError(
+            f"Invalid object_type '{object_type}'. Must be one of: {', '.join(sorted(_COMMENT_TYPE_MAP.keys()))}"
+        )
+    if not comment or not comment.strip():
+        raise ValueError("Comment text must not be empty.")
+
+    patch_path, _ = _COMMENT_TYPE_MAP[object_type]
+    actual_session_id = _get_session_id(session_id)
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
+
+    def do_add_comment():
+        # Get current version for optimistic concurrency control
+        obj = taiga_client_wrapper.api.get(f"/{patch_path}/{object_id}")
+        version = obj.get("version")
+        if version is None:
+            raise ValueError(
+                f"Could not determine version for {object_type} {object_id}. Cannot add comment."
+            )
+        taiga_client_wrapper.api.patch(
+            f"/{patch_path}/{object_id}",
+            json={"comment": comment, "version": version},
+        )
+        return {
+            "status": "comment_added",
+            "object_type": object_type,
+            "object_id": object_id,
+        }
+
+    return _execute_taiga_operation("add_comment", do_add_comment, f"{object_type} {object_id}")
+
+
+@mcp.tool()
+def list_comments(
+    object_id: int,
+    object_type: str,
+    session_id: Optional[str] = None,
+) -> list:
+    """List comments on a Taiga object (issue, task, user_story, or epic).
+
+    Args:
+        object_id: The ID of the object
+        object_type: Type of object: 'issue', 'task', 'user_story', 'userstory', or 'epic'
+        session_id: Optional session ID (uses default if not provided)
+
+    Returns:
+        List of comment dicts with id, comment, comment_html, user, and created_at
+    """
+    if object_type not in _COMMENT_TYPE_MAP:
+        raise ValueError(
+            f"Invalid object_type '{object_type}'. Must be one of: {', '.join(sorted(_COMMENT_TYPE_MAP.keys()))}"
+        )
+
+    _, history_path = _COMMENT_TYPE_MAP[object_type]
+    actual_session_id = _get_session_id(session_id)
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
+
+    def do_list_comments():
+        history = taiga_client_wrapper.api.get(f"/history/{history_path}/{object_id}")
+        return [
+            {
+                "id": entry.get("id"),
+                "comment": entry["comment"],
+                "comment_html": entry.get("comment_html", ""),
+                "user": entry.get("user"),
+                "created_at": entry.get("created_at"),
+            }
+            for entry in history
+            if entry.get("comment", "").strip() and not entry.get("delete_comment_date")
+        ]
+
+    return _execute_taiga_operation("list_comments", do_list_comments, f"{object_type} {object_id}")
+
+# =============================================================================
+# NEW FEATURES — Search, Bulk Ops, Stats, Custom Attrs, History, Watch/Vote,
+#                Wiki Complete, Tags, Roles, Points, Filters, Resolver, Attachments
+# =============================================================================
+
+
+# --- Search Tools ---
+
+
+@mcp.tool(
+    "search",
+    description="Search within a project for user stories, tasks, issues, wiki pages and more. Returns results grouped by type. Uses default session if session_id not provided.",
+)
+def search(
+    project_id: int,
+    text: str,
+    session_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Full-text search across all item types in a project."""
+    actual_session_id = _get_session_id(session_id)
+    logger.info(f"Executing search in project {project_id} for '{text}', session {actual_session_id[:8]}...")
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
+
+    return _execute_taiga_operation(
+        "search",
+        lambda: taiga_client_wrapper.api.get(
+            "/search", params={"project": project_id, "text": text}
+        ),
+        f"project {project_id}, query '{text}'",
+    )
+
+
+# --- Bulk Operation Tools ---
+
+
+@mcp.tool(
+    "bulk_create_user_stories",
+    description="Create multiple user stories at once from a newline-separated list of subjects. Returns created stories. Uses default session if session_id not provided.",
+)
+def bulk_create_user_stories(
+    project_id: int,
+    subjects: str,
+    status_id: Optional[int] = None,
+    session_id: Optional[str] = None,
+) -> Any:
+    """Bulk create user stories. subjects is a newline-separated string of story titles."""
+    actual_session_id = _get_session_id(session_id)
+    logger.info(f"Executing bulk_create_user_stories in project {project_id}, session {actual_session_id[:8]}...")
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
+
+    payload = {
+        "project_id": project_id,
+        "bulk_stories": subjects,
+    }
+    if status_id is not None:
+        payload["status_id"] = status_id
+
+    return _execute_taiga_operation(
+        "bulk_create_user_stories",
+        lambda: taiga_client_wrapper.api.post("/userstories/bulk_create", json=payload),
+        f"project {project_id}",
+    )
+
+
+@mcp.tool(
+    "bulk_create_tasks",
+    description="Create multiple tasks at once from a newline-separated list of subjects within a user story. Returns created tasks. Uses default session if session_id not provided.",
+)
+def bulk_create_tasks(
+    project_id: int,
+    subjects: str,
+    us_id: Optional[int] = None,
+    sprint_id: Optional[int] = None,
+    session_id: Optional[str] = None,
+) -> Any:
+    """Bulk create tasks. subjects is a newline-separated string of task titles."""
+    actual_session_id = _get_session_id(session_id)
+    logger.info(f"Executing bulk_create_tasks in project {project_id}, session {actual_session_id[:8]}...")
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
+
+    payload = {
+        "project_id": project_id,
+        "bulk_tasks": subjects,
+    }
+    if us_id is not None:
+        payload["us_id"] = us_id
+    if sprint_id is not None:
+        payload["sprint_id"] = sprint_id
+
+    return _execute_taiga_operation(
+        "bulk_create_tasks",
+        lambda: taiga_client_wrapper.api.post("/tasks/bulk_create", json=payload),
+        f"project {project_id}",
+    )
+
+
+@mcp.tool(
+    "bulk_create_epics",
+    description="Create multiple epics at once from a newline-separated list of subjects. Returns created epics. Uses default session if session_id not provided.",
+)
+def bulk_create_epics(
+    project_id: int,
+    subjects: str,
+    status_id: Optional[int] = None,
+    session_id: Optional[str] = None,
+) -> Any:
+    """Bulk create epics. subjects is a newline-separated string of epic titles."""
+    actual_session_id = _get_session_id(session_id)
+    logger.info(f"Executing bulk_create_epics in project {project_id}, session {actual_session_id[:8]}...")
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
+
+    payload = {
+        "project_id": project_id,
+        "bulk_epics": subjects,
+    }
+    if status_id is not None:
+        payload["status_id"] = status_id
+
+    return _execute_taiga_operation(
+        "bulk_create_epics",
+        lambda: taiga_client_wrapper.api.post("/epics/bulk_create", json=payload),
+        f"project {project_id}",
+    )
+
+
+@mcp.tool(
+    "bulk_update_story_sprint",
+    description="Move multiple user stories to a sprint (milestone) at once. Provide story IDs and the target sprint ID. Uses default session if session_id not provided.",
+)
+def bulk_update_story_sprint(
+    project_id: int,
+    milestone_id: int,
+    story_ids: str,
+    session_id: Optional[str] = None,
+) -> Any:
+    """Move stories to a sprint. story_ids is a comma-separated string of user story IDs."""
+    actual_session_id = _get_session_id(session_id)
+    logger.info(f"Executing bulk_update_story_sprint in project {project_id}, session {actual_session_id[:8]}...")
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
+
+    ids = [int(x.strip()) for x in story_ids.split(",") if x.strip()]
+    payload = {
+        "project_id": project_id,
+        "milestone_id": milestone_id,
+        "bulk_stories": [{"us_id": uid, "order": i + 1} for i, uid in enumerate(ids)],
+    }
+
+    return _execute_taiga_operation(
+        "bulk_update_story_sprint",
+        lambda: taiga_client_wrapper.api.post("/userstories/bulk_update_milestone", json=payload),
+        f"project {project_id}, milestone {milestone_id}",
+    )
+
+
+# --- Stats Tools ---
+
+
+@mcp.tool(
+    "get_project_stats",
+    description="Get project statistics including total points, assigned points, completed points, and velocity. Uses default session if session_id not provided.",
+)
+def get_project_stats(
+    project_id: int,
+    session_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Retrieves detailed project statistics."""
+    actual_session_id = _get_session_id(session_id)
+    logger.info(f"Executing get_project_stats for project {project_id}, session {actual_session_id[:8]}...")
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
+
+    return _execute_taiga_operation(
+        "get_project_stats",
+        lambda: taiga_client_wrapper.api.get(f"/projects/{project_id}/stats"),
+        f"project {project_id}",
+    )
+
+
+@mcp.tool(
+    "get_project_issue_stats",
+    description="Get issue statistics for a project: counts by severity, priority, status, type and more. Uses default session if session_id not provided.",
+)
+def get_project_issue_stats(
+    project_id: int,
+    session_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Retrieves project issue statistics."""
+    actual_session_id = _get_session_id(session_id)
+    logger.info(f"Executing get_project_issue_stats for project {project_id}, session {actual_session_id[:8]}...")
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
+
+    return _execute_taiga_operation(
+        "get_project_issue_stats",
+        lambda: taiga_client_wrapper.api.get(f"/projects/{project_id}/issues_stats"),
+        f"project {project_id}",
+    )
+
+
+@mcp.tool(
+    "get_milestone_stats",
+    description="Get sprint/milestone statistics: burndown data, completed/total points, days info. Uses default session if session_id not provided.",
+)
+def get_milestone_stats(
+    milestone_id: int,
+    session_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Retrieves milestone/sprint statistics including burndown data."""
+    actual_session_id = _get_session_id(session_id)
+    logger.info(f"Executing get_milestone_stats for milestone {milestone_id}, session {actual_session_id[:8]}...")
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
+
+    return _execute_taiga_operation(
+        "get_milestone_stats",
+        lambda: taiga_client_wrapper.api.get(f"/milestones/{milestone_id}/stats"),
+        f"milestone {milestone_id}",
+    )
+
+
+# --- Custom Attribute Tools ---
+
+
+@mcp.tool(
+    "list_custom_attributes",
+    description="List custom attribute definitions for a project. object_type: 'user_story', 'task', 'issue', or 'epic'. Returns attribute names, types, and IDs. Uses default session if session_id not provided.",
+)
+def list_custom_attributes(
+    project_id: int,
+    object_type: str,
+    session_id: Optional[str] = None,
+) -> Any:
+    """List custom attribute definitions for a resource type in a project."""
+    if object_type not in _CUSTOM_ATTR_API_PATH:
+        raise ValueError(f"Invalid object_type '{object_type}'. Must be one of: {', '.join(sorted(_CUSTOM_ATTR_API_PATH.keys()))}")
+    actual_session_id = _get_session_id(session_id)
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
+    attr_path, _ = _CUSTOM_ATTR_API_PATH[object_type]
+
+    return _execute_taiga_operation(
+        "list_custom_attributes",
+        lambda: taiga_client_wrapper.api.get(f"/{attr_path}", params={"project": project_id}),
+        f"{object_type} in project {project_id}",
+    )
+
+
+@mcp.tool(
+    "get_custom_attribute_values",
+    description="Get custom attribute values for a specific item. object_type: 'user_story', 'task', 'issue', or 'epic'. object_id is the item's internal ID. Uses default session if session_id not provided.",
+)
+def get_custom_attribute_values(
+    object_id: int,
+    object_type: str,
+    session_id: Optional[str] = None,
+) -> Any:
+    """Get the custom attribute values for a specific item."""
+    if object_type not in _CUSTOM_ATTR_API_PATH:
+        raise ValueError(f"Invalid object_type '{object_type}'. Must be one of: {', '.join(sorted(_CUSTOM_ATTR_API_PATH.keys()))}")
+    actual_session_id = _get_session_id(session_id)
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
+    _, values_path = _CUSTOM_ATTR_API_PATH[object_type]
+
+    return _execute_taiga_operation(
+        "get_custom_attribute_values",
+        lambda: taiga_client_wrapper.api.get(f"/{values_path}/{object_id}"),
+        f"{object_type} {object_id}",
+    )
+
+
+@mcp.tool(
+    "set_custom_attribute_values",
+    description="Set custom attribute values for a specific item. Provide attributes_values as a JSON string mapping attribute IDs to values, e.g. '{\"123\": \"high\", \"456\": 42}'. Uses default session if session_id not provided.",
+)
+def set_custom_attribute_values(
+    object_id: int,
+    object_type: str,
+    attributes_values: str,
+    version: int = 1,
+    session_id: Optional[str] = None,
+) -> Any:
+    """Set custom attribute values. attributes_values is a JSON string."""
+    if object_type not in _CUSTOM_ATTR_API_PATH:
+        raise ValueError(f"Invalid object_type '{object_type}'. Must be one of: {', '.join(sorted(_CUSTOM_ATTR_API_PATH.keys()))}")
+    actual_session_id = _get_session_id(session_id)
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
+    _, values_path = _CUSTOM_ATTR_API_PATH[object_type]
+
+    try:
+        parsed_values = json.loads(attributes_values)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Invalid JSON for attributes_values: {e}")
+
+    payload = {
+        "attributes_values": parsed_values,
+        "version": version,
+    }
+
+    return _execute_taiga_operation(
+        "set_custom_attribute_values",
+        lambda: taiga_client_wrapper.api.patch(f"/{values_path}/{object_id}", json=payload),
+        f"{object_type} {object_id}",
+    )
+
+
+# --- History & Timeline Tools ---
+
+
+@mcp.tool(
+    "get_history",
+    description="Get the change history of an item. object_type: 'user_story', 'task', 'issue', 'epic', or 'wiki_page'. Returns all changes including field edits, comments, and status changes. Uses default session if session_id not provided.",
+)
+def get_history(
+    object_id: int,
+    object_type: str,
+    session_id: Optional[str] = None,
+) -> Any:
+    """Get change history for an item."""
+    if object_type not in _HISTORY_API_PATH:
+        raise ValueError(f"Invalid object_type '{object_type}'. Must be one of: {', '.join(sorted(_HISTORY_API_PATH.keys()))}")
+    actual_session_id = _get_session_id(session_id)
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
+    history_path = _HISTORY_API_PATH[object_type]
+
+    return _execute_taiga_operation(
+        "get_history",
+        lambda: taiga_client_wrapper.api.get(f"/history/{history_path}/{object_id}"),
+        f"{object_type} {object_id}",
+    )
+
+
+@mcp.tool(
+    "get_project_timeline",
+    description="Get recent activity timeline for a project. Shows all recent changes by all team members. Uses default session if session_id not provided.",
+)
+def get_project_timeline(
+    project_id: int,
+    page: int = 1,
+    session_id: Optional[str] = None,
+) -> Any:
+    """Get the activity timeline for a project."""
+    actual_session_id = _get_session_id(session_id)
+    logger.info(f"Executing get_project_timeline for project {project_id}, session {actual_session_id[:8]}...")
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
+
+    return _execute_taiga_operation(
+        "get_project_timeline",
+        lambda: taiga_client_wrapper.api.get(f"/timeline/project/{project_id}", params={"page": page}),
+        f"project {project_id}",
+    )
+
+
+@mcp.tool(
+    "get_user_timeline",
+    description="Get recent activity timeline for a specific user. Shows all their recent actions across projects. Uses default session if session_id not provided.",
+)
+def get_user_timeline(
+    user_id: int,
+    page: int = 1,
+    session_id: Optional[str] = None,
+) -> Any:
+    """Get the activity timeline for a user."""
+    actual_session_id = _get_session_id(session_id)
+    logger.info(f"Executing get_user_timeline for user {user_id}, session {actual_session_id[:8]}...")
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
+
+    return _execute_taiga_operation(
+        "get_user_timeline",
+        lambda: taiga_client_wrapper.api.get(f"/timeline/user/{user_id}", params={"page": page}),
+        f"user {user_id}",
+    )
+
+
+# --- Watch & Vote Tools ---
+
+
+@mcp.tool(
+    "watch_item",
+    description="Start watching an item to receive notifications. object_type: 'user_story', 'task', 'issue', 'epic', 'milestone', or 'wiki_page'. Uses default session if session_id not provided.",
+)
+def watch_item(
+    object_id: int,
+    object_type: str,
+    session_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Watch an item for notifications."""
+    if object_type not in _WATCHABLE_TYPES:
+        raise ValueError(f"Invalid object_type '{object_type}'. Must be one of: {', '.join(sorted(_WATCHABLE_TYPES))}")
+    actual_session_id = _get_session_id(session_id)
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
+    api_path = _WATCH_API_PATH[object_type]
+
+    _execute_taiga_operation(
+        "watch_item",
+        lambda: taiga_client_wrapper.api.post(f"/{api_path}/{object_id}/watch"),
+        f"{object_type} {object_id}",
+    )
+    return {"status": "watching", "object_type": object_type, "object_id": object_id}
+
+
+@mcp.tool(
+    "unwatch_item",
+    description="Stop watching an item. object_type: 'user_story', 'task', 'issue', 'epic', 'milestone', or 'wiki_page'. Uses default session if session_id not provided.",
+)
+def unwatch_item(
+    object_id: int,
+    object_type: str,
+    session_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Stop watching an item."""
+    if object_type not in _WATCHABLE_TYPES:
+        raise ValueError(f"Invalid object_type '{object_type}'. Must be one of: {', '.join(sorted(_WATCHABLE_TYPES))}")
+    actual_session_id = _get_session_id(session_id)
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
+    api_path = _WATCH_API_PATH[object_type]
+
+    _execute_taiga_operation(
+        "unwatch_item",
+        lambda: taiga_client_wrapper.api.post(f"/{api_path}/{object_id}/unwatch"),
+        f"{object_type} {object_id}",
+    )
+    return {"status": "unwatched", "object_type": object_type, "object_id": object_id}
+
+
+@mcp.tool(
+    "upvote_item",
+    description="Vote for an item (upvote). object_type: 'user_story', 'task', 'issue', or 'epic'. Uses default session if session_id not provided.",
+)
+def upvote_item(
+    object_id: int,
+    object_type: str,
+    session_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Upvote an item."""
+    if object_type not in _VOTABLE_TYPES:
+        raise ValueError(f"Invalid object_type '{object_type}'. Must be one of: {', '.join(sorted(_VOTABLE_TYPES))}")
+    actual_session_id = _get_session_id(session_id)
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
+    api_path = _ITEM_API_PATH[object_type]
+
+    _execute_taiga_operation(
+        "upvote_item",
+        lambda: taiga_client_wrapper.api.post(f"/{api_path}/{object_id}/upvote"),
+        f"{object_type} {object_id}",
+    )
+    return {"status": "upvoted", "object_type": object_type, "object_id": object_id}
+
+
+@mcp.tool(
+    "downvote_item",
+    description="Remove your vote from an item (downvote). object_type: 'user_story', 'task', 'issue', or 'epic'. Uses default session if session_id not provided.",
+)
+def downvote_item(
+    object_id: int,
+    object_type: str,
+    session_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Remove your vote from an item."""
+    if object_type not in _VOTABLE_TYPES:
+        raise ValueError(f"Invalid object_type '{object_type}'. Must be one of: {', '.join(sorted(_VOTABLE_TYPES))}")
+    actual_session_id = _get_session_id(session_id)
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
+    api_path = _ITEM_API_PATH[object_type]
+
+    _execute_taiga_operation(
+        "downvote_item",
+        lambda: taiga_client_wrapper.api.post(f"/{api_path}/{object_id}/downvote"),
+        f"{object_type} {object_id}",
+    )
+    return {"status": "downvoted", "object_type": object_type, "object_id": object_id}
+
+
+# --- Wiki Complete Tools ---
+
+
+@mcp.tool(
+    "update_wiki_page",
+    description="Update an existing wiki page's content, slug, or other fields. Requires the current version number for optimistic concurrency. Uses default session if session_id not provided.",
+)
+def update_wiki_page(
+    wiki_page_id: int,
+    version: int,
+    kwargs: Any = None,
+    session_id: Optional[str] = None,
+    verbosity: str = "standard",
+) -> Dict[str, Any]:
+    """Update a wiki page. Pass fields to update via kwargs JSON string."""
+    actual_session_id = _get_session_id(session_id)
+    parsed_kwargs = _validate_kwargs("wiki_page", _parse_mcp_kwargs({"kwargs": kwargs}))
+    parsed_kwargs["version"] = version
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
+
+    result = _execute_taiga_operation(
+        "update_wiki_page",
+        lambda: taiga_client_wrapper.api.patch(f"/wiki/{wiki_page_id}", json=parsed_kwargs),
+        f"wiki page {wiki_page_id}",
+    )
+    return _filter_response(result, "wiki_page", verbosity)
+
+
+@mcp.tool(
+    "delete_wiki_page",
+    description="Delete a wiki page by its ID. This action is irreversible. Uses default session if session_id not provided.",
+)
+def delete_wiki_page(
+    wiki_page_id: int,
+    session_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Delete a wiki page."""
+    actual_session_id = _get_session_id(session_id)
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
+
+    _execute_taiga_operation(
+        "delete_wiki_page",
+        lambda: taiga_client_wrapper.api.delete(f"/wiki/{wiki_page_id}"),
+        f"wiki page {wiki_page_id}",
+    )
+    return {"status": "deleted", "wiki_page_id": wiki_page_id}
+
+
+@mcp.tool(
+    "list_wiki_links",
+    description="List wiki navigation links for a project. These are the sidebar links in the wiki. Uses default session if session_id not provided.",
+)
+def list_wiki_links(
+    project_id: int,
+    session_id: Optional[str] = None,
+) -> Any:
+    """List wiki links for a project."""
+    actual_session_id = _get_session_id(session_id)
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
+
+    return _execute_taiga_operation(
+        "list_wiki_links",
+        lambda: taiga_client_wrapper.api.get("/wiki-links", params={"project": project_id}),
+        f"project {project_id}",
+    )
+
+
+@mcp.tool(
+    "create_wiki_link",
+    description="Create a wiki navigation link (sidebar entry). Uses default session if session_id not provided.",
+)
+def create_wiki_link(
+    project_id: int,
+    title: str,
+    href: str,
+    order: int = 1,
+    session_id: Optional[str] = None,
+) -> Any:
+    """Create a wiki link."""
+    actual_session_id = _get_session_id(session_id)
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
+
+    payload = {"project": project_id, "title": title, "href": href, "order": order}
+    return _execute_taiga_operation(
+        "create_wiki_link",
+        lambda: taiga_client_wrapper.api.post("/wiki-links", json=payload),
+        f"project {project_id}",
+    )
+
+
+@mcp.tool(
+    "delete_wiki_link",
+    description="Delete a wiki navigation link by its ID. Uses default session if session_id not provided.",
+)
+def delete_wiki_link(
+    wiki_link_id: int,
+    session_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Delete a wiki link."""
+    actual_session_id = _get_session_id(session_id)
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
+
+    _execute_taiga_operation(
+        "delete_wiki_link",
+        lambda: taiga_client_wrapper.api.delete(f"/wiki-links/{wiki_link_id}"),
+        f"wiki link {wiki_link_id}",
+    )
+    return {"status": "deleted", "wiki_link_id": wiki_link_id}
+
+
+# --- Tag Tools ---
+
+
+@mcp.tool(
+    "get_project_tags",
+    description="Get all tags and their colors for a project. Uses default session if session_id not provided.",
+)
+def get_project_tags(
+    project_id: int,
+    session_id: Optional[str] = None,
+) -> Any:
+    """List all tags in a project with their colors."""
+    actual_session_id = _get_session_id(session_id)
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
+
+    return _execute_taiga_operation(
+        "get_project_tags",
+        lambda: taiga_client_wrapper.api.get(f"/projects/{project_id}/tags_colors"),
+        f"project {project_id}",
+    )
+
+
+@mcp.tool(
+    "create_project_tag",
+    description="Create a new tag in a project with an optional color (hex like '#FF0000'). Uses default session if session_id not provided.",
+)
+def create_project_tag(
+    project_id: int,
+    tag: str,
+    color: Optional[str] = None,
+    session_id: Optional[str] = None,
+) -> Any:
+    """Create a tag in a project."""
+    actual_session_id = _get_session_id(session_id)
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
+
+    payload = {"project": project_id, "tag": tag}
+    if color:
+        payload["color"] = color
+
+    return _execute_taiga_operation(
+        "create_project_tag",
+        lambda: taiga_client_wrapper.api.post(f"/projects/{project_id}/create_tag", json=payload),
+        f"project {project_id}, tag '{tag}'",
+    )
+
+
+@mcp.tool(
+    "delete_project_tag",
+    description="Delete a tag from a project. All items with this tag will have it removed. Uses default session if session_id not provided.",
+)
+def delete_project_tag(
+    project_id: int,
+    tag: str,
+    session_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Delete a tag from a project."""
+    actual_session_id = _get_session_id(session_id)
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
+
+    _execute_taiga_operation(
+        "delete_project_tag",
+        lambda: taiga_client_wrapper.api.post(f"/projects/{project_id}/delete_tag", json={"tag": tag}),
+        f"project {project_id}, tag '{tag}'",
+    )
+    return {"status": "deleted", "tag": tag, "project_id": project_id}
+
+
+# --- Roles & Points Tools ---
+
+
+@mcp.tool(
+    "list_roles",
+    description="List all roles defined in a project. Shows role names, permissions, and IDs. Uses default session if session_id not provided.",
+)
+def list_roles(
+    project_id: int,
+    session_id: Optional[str] = None,
+) -> Any:
+    """List roles for a project."""
+    actual_session_id = _get_session_id(session_id)
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
+
+    return _execute_taiga_operation(
+        "list_roles",
+        lambda: taiga_client_wrapper.api.get("/roles", params={"project": project_id}),
+        f"project {project_id}",
+    )
+
+
+@mcp.tool(
+    "list_points",
+    description="List all point values (for story estimation) defined in a project. Shows point names, values, and IDs. Uses default session if session_id not provided.",
+)
+def list_points(
+    project_id: int,
+    session_id: Optional[str] = None,
+) -> Any:
+    """List point definitions for a project."""
+    actual_session_id = _get_session_id(session_id)
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
+
+    return _execute_taiga_operation(
+        "list_points",
+        lambda: taiga_client_wrapper.api.get("/points", params={"project": project_id}),
+        f"project {project_id}",
+    )
+
+
+# --- Filters Data Tool ---
+
+
+@mcp.tool(
+    "get_filters_data",
+    description="Get available filter options for listing items: statuses, tags, assigned users, roles, etc. object_type: 'user_story', 'task', 'issue', or 'epic'. Useful for building dynamic filters. Uses default session if session_id not provided.",
+)
+def get_filters_data(
+    project_id: int,
+    object_type: str,
+    session_id: Optional[str] = None,
+) -> Any:
+    """Get available filter options for a resource type."""
+    if object_type not in _FILTERS_API_PATH:
+        raise ValueError(f"Invalid object_type '{object_type}'. Must be one of: {', '.join(sorted(_FILTERS_API_PATH.keys()))}")
+    actual_session_id = _get_session_id(session_id)
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
+    api_path = _FILTERS_API_PATH[object_type]
+
+    return _execute_taiga_operation(
+        "get_filters_data",
+        lambda: taiga_client_wrapper.api.get(f"/{api_path}/filters_data", params={"project": project_id}),
+        f"{object_type} in project {project_id}",
+    )
+
+
+# --- Resolver Tool ---
+
+
+@mcp.tool(
+    "resolve",
+    description="Resolve a project slug and optional item reference numbers to internal IDs. Useful when you have a project slug (from URL) and need the project_id, or a '#N' ref number and need the internal ID. Uses default session if session_id not provided.",
+)
+def resolve(
+    project_slug: str,
+    us_ref: Optional[int] = None,
+    task_ref: Optional[int] = None,
+    issue_ref: Optional[int] = None,
+    milestone_slug: Optional[str] = None,
+    wiki_slug: Optional[str] = None,
+    epic_ref: Optional[int] = None,
+    session_id: Optional[str] = None,
+) -> Any:
+    """Resolve slugs/refs to internal IDs."""
+    actual_session_id = _get_session_id(session_id)
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
+
+    params = {"project": project_slug}
+    if us_ref is not None:
+        params["us"] = us_ref
+    if task_ref is not None:
+        params["task"] = task_ref
+    if issue_ref is not None:
+        params["issue"] = issue_ref
+    if milestone_slug is not None:
+        params["milestone"] = milestone_slug
+    if wiki_slug is not None:
+        params["wiki_page"] = wiki_slug
+    if epic_ref is not None:
+        params["epic"] = epic_ref
+
+    return _execute_taiga_operation(
+        "resolve",
+        lambda: taiga_client_wrapper.api.get("/resolver", params=params),
+        f"slug '{project_slug}'",
+    )
+
+
+# --- Attachment Tools ---
+
+
+@mcp.tool(
+    "list_attachments",
+    description="List all attachments for an item. object_type: 'user_story', 'task', 'issue', 'epic', or 'wiki_page'. Uses default session if session_id not provided.",
+)
+def list_attachments(
+    object_id: int,
+    object_type: str,
+    project_id: int,
+    session_id: Optional[str] = None,
+) -> Any:
+    """List attachments for an item."""
+    if object_type not in _ATTACHMENT_API_PATH:
+        raise ValueError(f"Invalid object_type '{object_type}'. Must be one of: {', '.join(sorted(_ATTACHMENT_API_PATH.keys()))}")
+    actual_session_id = _get_session_id(session_id)
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
+    api_path = _ATTACHMENT_API_PATH[object_type]
+
+    return _execute_taiga_operation(
+        "list_attachments",
+        lambda: taiga_client_wrapper.api.get(
+            f"/{api_path}/attachments",
+            params={"object_id": object_id, "project": project_id},
+        ),
+        f"{object_type} {object_id}",
+    )
+
+
+@mcp.tool(
+    "delete_attachment",
+    description="Delete an attachment by its ID. object_type: 'user_story', 'task', 'issue', 'epic', or 'wiki_page'. Uses default session if session_id not provided.",
+)
+def delete_attachment(
+    attachment_id: int,
+    object_type: str,
+    session_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Delete an attachment."""
+    if object_type not in _ATTACHMENT_API_PATH:
+        raise ValueError(f"Invalid object_type '{object_type}'. Must be one of: {', '.join(sorted(_ATTACHMENT_API_PATH.keys()))}")
+    actual_session_id = _get_session_id(session_id)
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
+    api_path = _ATTACHMENT_API_PATH[object_type]
+
+    _execute_taiga_operation(
+        "delete_attachment",
+        lambda: taiga_client_wrapper.api.delete(f"/{api_path}/attachments/{attachment_id}"),
+        f"attachment {attachment_id}",
+    )
+    return {"status": "deleted", "attachment_id": attachment_id}
 
 
 # --- Run the server ---
