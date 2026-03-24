@@ -170,7 +170,9 @@ The bridge can be configured through environment variables or a `.env` file:
 | `TAIGA_API_URL` | Base URL for the Taiga API | http://localhost:9000 |
 | `TAIGA_USERNAME` | Taiga username for auto-authentication | (none) |
 | `TAIGA_PASSWORD` | Taiga password for auto-authentication | (none) |
-| `TAIGA_TRANSPORT` | Transport mode (stdio or sse) | stdio |
+| `TAIGA_TRANSPORT` | Transport mode (stdio, sse, or streamable-http) | stdio |
+| `MCP_HOST` | Bind address for SSE/HTTP transport. Use `0.0.0.0` for Docker. | 127.0.0.1 |
+| `MCP_PORT` | Listen port for SSE/HTTP transport | 8000 |
 | `LOG_LEVEL` | Logging level | INFO |
 
 Create a `.env` file in the project root to set these values:

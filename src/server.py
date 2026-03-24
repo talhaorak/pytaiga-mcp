@@ -397,12 +397,21 @@ async def server_lifespan(server: FastMCP) -> AsyncIterator[None]:
 
 
 # --- MCP Server Definition ---
+_mcp_port_str = os.environ.get("MCP_PORT", "8000")
+try:
+    _mcp_port = int(_mcp_port_str)
+except ValueError:
+    logger.error(
+        f"Invalid MCP_PORT value '{_mcp_port_str}', must be a number. Falling back to 8000."
+    )
+    _mcp_port = 8000
+
 mcp = FastMCP(
     "Taiga Bridge",
     dependencies=["pytaigaclient"],
     lifespan=server_lifespan,
     host=os.environ.get("MCP_HOST", "127.0.0.1"),
-    port=int(os.environ.get("MCP_PORT", "8000")),
+    port=_mcp_port,
 )
 
 # --- Helper Functions for Session Validation ---
