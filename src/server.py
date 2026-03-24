@@ -2,6 +2,8 @@
 import json
 import logging
 import logging.config
+import os
+import sys
 import uuid
 from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator, Dict, List, Optional
@@ -2162,6 +2164,45 @@ def list_comments(
     return _execute_taiga_operation("list_comments", do_list_comments, f"{object_type} {object_id}")
 
 
+VALID_TRANSPORTS = ("stdio", "sse", "streamable-http")
+
+
+def _resolve_transport(argv: list[str] | None = None, env: dict[str, str] | None = None) -> str:
+    """Determine the MCP transport from CLI flags or environment variable.
+
+    Priority: CLI flags (--sse, --streamable-http) > TAIGA_TRANSPORT env var > default (stdio).
+
+    Args:
+        argv: Command-line arguments (defaults to sys.argv).
+        env: Environment variables (defaults to os.environ).
+
+    Returns:
+        The transport name to use.
+    """
+    if argv is None:
+        argv = sys.argv
+    if env is None:
+        env = dict(os.environ)
+
+    if "--sse" in argv:
+        return "sse"
+    if "--streamable-http" in argv:
+        return "streamable-http"
+
+    env_transport = env.get("TAIGA_TRANSPORT", "").lower()
+    if env_transport in VALID_TRANSPORTS:
+        return env_transport
+    if env_transport:
+        logger.warning(
+            f"Unknown TAIGA_TRANSPORT value '{env_transport}', falling back to stdio. "
+            f"Valid values: {', '.join(VALID_TRANSPORTS)}"
+        )
+
+    return "stdio"
+
+
 # --- Run the server ---
 if __name__ == "__main__":
-    mcp.run()
+    transport = _resolve_transport()
+    logger.info(f"Starting server with {transport} transport")
+    mcp.run(transport=transport)
