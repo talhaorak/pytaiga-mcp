@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v1.3.0 (2026-03-24)
+
+### Features
+
+- Add SSE and streamable-http transport support
+  ([`ede5586`](https://github.com/TETRA-2023/pytaiga-mcp/commit/ede5586c526b3cfde73e1d8f7c821a6d37b25434))
+
+
 ## v1.2.3 (2026-03-16)
 
 ### Bug Fixes
