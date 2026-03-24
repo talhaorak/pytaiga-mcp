@@ -1,3 +1,4 @@
+import json
 import uuid
 from unittest.mock import MagicMock, patch
 
@@ -1071,6 +1072,75 @@ class TestTaigaTools:
         assert result["id"] == 400
         assert result["slug"] == "home"
         mock_client.api.wiki.get.assert_called_once_with(400)
+
+    def test_get_wiki_page_by_slug(self, session_setup):
+        """Test get_wiki_page_by_slug."""
+        session_id, mock_client = session_setup
+        mock_client.api.wiki.get_by_slug.return_value = {
+            "id": 400,
+            "slug": "home",
+            "content": "# Welcome",
+            "project": 123,
+            "version": 1,
+        }
+        result = src.server.get_wiki_page_by_slug(123, "home", session_id)
+        assert result["id"] == 400
+        assert result["slug"] == "home"
+        mock_client.api.wiki.get_by_slug.assert_called_once_with(slug="home", project=123)
+
+    def test_get_wiki_page_by_slug_not_found(self, session_setup):
+        """Test get_wiki_page_by_slug raises ValueError when not found."""
+        session_id, mock_client = session_setup
+        mock_client.api.wiki.get_by_slug.return_value = {}
+        with pytest.raises(ValueError, match="not found"):
+            src.server.get_wiki_page_by_slug(123, "nonexistent", session_id)
+
+    def test_update_wiki_page(self, session_setup):
+        """Test update_wiki_page."""
+        session_id, mock_client = session_setup
+        mock_client.api.wiki.get.return_value = {
+            "id": 400,
+            "slug": "home",
+            "content": "# Welcome",
+            "project": 123,
+            "version": 1,
+        }
+        mock_client.api.wiki.edit.return_value = {
+            "id": 400,
+            "slug": "home",
+            "content": "# Updated",
+            "project": 123,
+            "version": 2,
+        }
+        result = src.server.update_wiki_page(400, json.dumps({"content": "# Updated"}), session_id)
+        assert result["content"] == "# Updated"
+        assert result["version"] == 2
+        mock_client.api.wiki.edit.assert_called_once_with(
+            wiki_page_id=400, version=1, data={"content": "# Updated"}
+        )
+
+    def test_update_wiki_page_no_kwargs(self, session_setup):
+        """Test update_wiki_page with no kwargs returns current state."""
+        session_id, mock_client = session_setup
+        mock_client.api.wiki.get.return_value = {
+            "id": 400,
+            "slug": "home",
+            "content": "# Welcome",
+            "project": 123,
+            "version": 1,
+        }
+        result = src.server.update_wiki_page(400, None, session_id)
+        assert result["id"] == 400
+        mock_client.api.wiki.edit.assert_not_called()
+
+    def test_delete_wiki_page(self, session_setup):
+        """Test delete_wiki_page."""
+        session_id, mock_client = session_setup
+        mock_client.api.wiki.delete.return_value = None
+        result = src.server.delete_wiki_page(400, session_id)
+        assert result["status"] == "deleted"
+        assert result["wiki_page_id"] == 400
+        mock_client.api.wiki.delete.assert_called_once_with(wiki_page_id=400)
 
     # ─── Verbosity tests for various tools ───────────────────────────
 
