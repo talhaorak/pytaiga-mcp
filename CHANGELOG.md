@@ -2,6 +2,22 @@
 
 <!-- version list -->
 
+## v1.4.0 (2026-03-24)
+
+### Bug Fixes
+
+- Bind SSE/HTTP server to MCP_HOST for Docker compatibility
+  ([`01edeb4`](https://github.com/TETRA-2023/pytaiga-mcp/commit/01edeb4b8371b7b57b6045dda2ac10e50dc6f899))
+
+- Validate MCP_PORT and document MCP_HOST/MCP_PORT env vars
+  ([`09c10a2`](https://github.com/TETRA-2023/pytaiga-mcp/commit/09c10a263dd630cfcee4d88b20ba78ea52863eea))
+
+### Features
+
+- Add update, delete, and get-by-slug wiki page tools
+  ([`f43e346`](https://github.com/TETRA-2023/pytaiga-mcp/commit/f43e346577a1cf747d68497b16cb8f58c4005e0b))
+
+
 ## v1.3.1 (2026-03-24)
 
 ### Bug Fixes
