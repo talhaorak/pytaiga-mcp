@@ -397,7 +397,13 @@ async def server_lifespan(server: FastMCP) -> AsyncIterator[None]:
 
 
 # --- MCP Server Definition ---
-mcp = FastMCP("Taiga Bridge", dependencies=["pytaigaclient"], lifespan=server_lifespan)
+mcp = FastMCP(
+    "Taiga Bridge",
+    dependencies=["pytaigaclient"],
+    lifespan=server_lifespan,
+    host=os.environ.get("MCP_HOST", "127.0.0.1"),
+    port=int(os.environ.get("MCP_PORT", "8000")),
+)
 
 # --- Helper Functions for Session Validation ---
 
