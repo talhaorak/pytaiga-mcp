@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v1.5.0 (2026-03-26)
+
+### Features
+
+- Add global search tool and CLAUDE.md
+  ([`0c9981b`](https://github.com/TETRA-2023/pytaiga-mcp/commit/0c9981bde6bd41bd6b3f7b2f634fee1345a3fa80))
+
+
 ## v1.4.0 (2026-03-24)
 
 ### Bug Fixes
