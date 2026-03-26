@@ -826,6 +826,135 @@ def delete_project(project_id: int, session_id: Optional[str] = None) -> Dict[st
     return _execute_taiga_operation("delete_project", do_delete, f"project {project_id}")
 
 
+# --- Project Tag Management ---
+
+
+@mcp.tool()
+def get_project_tags_colors(
+    project_id: int,
+    session_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Get the tag-color mapping for a project.
+
+    Args:
+        project_id: The project ID
+        session_id: Optional session ID (uses default if not provided)
+
+    Returns:
+        Dict mapping tag names to hex color strings (e.g., {'bug': '#FF0000'}).
+    """
+    actual_session_id = _get_session_id(session_id)
+    logger.info(
+        f"Executing get_project_tags_colors for project {project_id} "
+        f"session {actual_session_id[:8]}..."
+    )
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
+
+    def do_get():
+        return taiga_client_wrapper.api.get(f"/projects/{project_id}/tags_colors")
+
+    return _execute_taiga_operation("get_project_tags_colors", do_get, f"project {project_id}")
+
+
+@mcp.tool()
+def edit_project_tag(
+    project_id: int,
+    tag: str,
+    color: Optional[str] = None,
+    new_tag: Optional[str] = None,
+    session_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Rename or recolor a tag in a project.
+
+    Args:
+        project_id: The project ID
+        tag: The current tag name to edit
+        color: New hex color for the tag (e.g., '#FF0000'). Pass None to keep current color.
+        new_tag: New name for the tag. Pass None to keep current name.
+        session_id: Optional session ID (uses default if not provided)
+
+    Returns:
+        Dict confirming the operation with the updated tag details.
+    """
+    tag = tag.strip() if tag else ""
+    if not tag:
+        raise ValueError("Tag name cannot be empty.")
+    new_tag = new_tag.strip() if new_tag else None
+    if color is None and new_tag is None:
+        raise ValueError("At least one of 'color' or 'new_tag' must be provided.")
+
+    actual_session_id = _get_session_id(session_id)
+    logger.info(
+        f"Executing edit_project_tag '{tag}' in project {project_id} "
+        f"session {actual_session_id[:8]}..."
+    )
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
+
+    def do_edit():
+        payload = {"tag": tag}
+        if color is not None:
+            payload["color"] = color
+        if new_tag is not None:
+            payload["new_tag"] = new_tag
+        taiga_client_wrapper.api.post(f"/projects/{project_id}/edit_tag", json=payload)
+        return {
+            "status": "tag_updated",
+            "project_id": project_id,
+            "tag": tag,
+            "color": color,
+            "new_tag": new_tag,
+        }
+
+    return _execute_taiga_operation("edit_project_tag", do_edit, f"project {project_id}")
+
+
+@mcp.tool()
+def mix_project_tags(
+    project_id: int,
+    from_tags: List[str],
+    to_tag: str,
+    session_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Merge multiple tags into a single tag in a project.
+
+    All items tagged with any of the 'from_tags' will be retagged with 'to_tag'.
+    The original tags are removed.
+
+    Args:
+        project_id: The project ID
+        from_tags: List of tag names to merge from
+        to_tag: The target tag name to merge into
+        session_id: Optional session ID (uses default if not provided)
+
+    Returns:
+        Dict confirming the merge operation.
+    """
+    to_tag = to_tag.strip() if to_tag else ""
+    if not to_tag:
+        raise ValueError("Target tag name ('to_tag') cannot be empty.")
+    if not from_tags or not any(t.strip() for t in from_tags):
+        raise ValueError("'from_tags' must contain at least one non-empty tag name.")
+
+    actual_session_id = _get_session_id(session_id)
+    logger.info(
+        f"Executing mix_project_tags in project {project_id} session {actual_session_id[:8]}..."
+    )
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
+
+    def do_mix():
+        cleaned_from = [t.strip() for t in from_tags if t.strip()]
+        payload = {"from_tags": cleaned_from, "to_tag": to_tag}
+        taiga_client_wrapper.api.post(f"/projects/{project_id}/mix_tags", json=payload)
+        return {
+            "status": "tags_merged",
+            "project_id": project_id,
+            "from_tags": cleaned_from,
+            "to_tag": to_tag,
+        }
+
+    return _execute_taiga_operation("mix_project_tags", do_mix, f"project {project_id}")
+
+
 # --- User Story Tools ---
 # Note: get_project_roles not implemented - not supported by pytaigaclient
 
