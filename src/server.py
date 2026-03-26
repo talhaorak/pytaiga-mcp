@@ -172,6 +172,18 @@ _COMMENT_TYPE_MAP = {
     "epic": ("epics", "epic"),
 }
 
+# --- History Type Mapping ---
+# Maps user-facing type names to history path segments (superset of comment types, includes wiki)
+_HISTORY_TYPE_MAP = {
+    "issue": "issue",
+    "task": "task",
+    "user_story": "userstory",
+    "userstory": "userstory",
+    "epic": "epic",
+    "wiki": "wiki",
+    "wiki_page": "wiki",
+}
+
 # --- Response Field Filtering ---
 # Define which fields to include at each verbosity level per resource type
 # - 'minimal': Core identification fields only
@@ -2586,6 +2598,53 @@ def get_comment_versions(
         do_get_versions,
         f"{object_type} {object_id} comment {comment_id}",
     )
+
+
+# --- History / Audit Trail ---
+
+
+@mcp.tool()
+def get_history(
+    object_id: int,
+    object_type: str,
+    session_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Get the full change history (audit trail) for a Taiga object.
+
+    Returns all history entries including field changes, status transitions,
+    assignments, and comments.
+
+    Args:
+        object_id: The ID of the object
+        object_type: Type of object: 'issue', 'task', 'user_story', 'userstory',
+                     'epic', 'wiki', or 'wiki_page'
+        session_id: Optional session ID (uses default if not provided)
+
+    Returns:
+        Dict with 'object_type', 'object_id', and 'history' list of change entries.
+    """
+    if object_type not in _HISTORY_TYPE_MAP:
+        raise ValueError(
+            f"Invalid object_type '{object_type}'. "
+            f"Must be one of: {', '.join(sorted(_HISTORY_TYPE_MAP.keys()))}"
+        )
+
+    history_path = _HISTORY_TYPE_MAP[object_type]
+    actual_session_id = _get_session_id(session_id)
+    logger.info(
+        f"Executing get_history for {object_type} {object_id} session {actual_session_id[:8]}..."
+    )
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
+
+    def do_get_history():
+        result = taiga_client_wrapper.api.get(f"/history/{history_path}/{object_id}")
+        return {
+            "object_type": object_type,
+            "object_id": object_id,
+            "history": result if isinstance(result, list) else [],
+        }
+
+    return _execute_taiga_operation("get_history", do_get_history, f"{object_type} {object_id}")
 
 
 # --- Search ---

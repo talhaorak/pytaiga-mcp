@@ -1489,6 +1489,64 @@ class TestTaigaTools:
         with pytest.raises(ValueError, match="Comment ID must not be empty"):
             src.server.get_comment_versions(42, "issue", "", session_id)
 
+    # ─── History / Audit Trail tests ───────────────────────────────────
+
+    def test_get_history(self, session_setup):
+        """Test get_history returns full change history."""
+        session_id, mock_client = session_setup
+        mock_client.api.get.return_value = [
+            {"id": "a", "type": 1, "values_diff": {"status": ["New", "In progress"]}},
+            {"id": "b", "type": 1, "comment": "Some comment"},
+        ]
+
+        result = src.server.get_history(42, "issue", session_id)
+
+        mock_client.api.get.assert_called_once_with("/history/issue/42")
+        assert result["object_type"] == "issue"
+        assert result["object_id"] == 42
+        assert len(result["history"]) == 2
+
+    def test_get_history_wiki(self, session_setup):
+        """Test get_history works with wiki type."""
+        session_id, mock_client = session_setup
+        mock_client.api.get.return_value = []
+
+        result = src.server.get_history(10, "wiki", session_id)
+
+        mock_client.api.get.assert_called_once_with("/history/wiki/10")
+        assert result["history"] == []
+
+    def test_get_history_wiki_page_alias(self, session_setup):
+        """Test get_history maps wiki_page to wiki path."""
+        session_id, mock_client = session_setup
+        mock_client.api.get.return_value = []
+
+        src.server.get_history(10, "wiki_page", session_id)
+
+        mock_client.api.get.assert_called_once_with("/history/wiki/10")
+
+    def test_get_history_user_story(self, session_setup):
+        """Test get_history maps user_story to userstory path."""
+        session_id, mock_client = session_setup
+        mock_client.api.get.return_value = [{"id": "x"}]
+
+        result = src.server.get_history(5, "user_story", session_id)
+
+        mock_client.api.get.assert_called_once_with("/history/userstory/5")
+        assert len(result["history"]) == 1
+
+    def test_get_history_invalid_type_raises(self, session_setup):
+        """Test get_history raises ValueError for invalid object_type."""
+        session_id, _ = session_setup
+        with pytest.raises(ValueError, match="Invalid object_type"):
+            src.server.get_history(42, "project", session_id)
+
+    def test_get_history_no_session_raises(self):
+        """Test get_history raises ValueError when no session available."""
+        src.server.active_sessions.clear()
+        with pytest.raises(ValueError, match="No session_id provided"):
+            src.server.get_history(42, "issue")
+
     # ─── Login default session tests (PR: fix/login-default-session-and-slug) ──
 
     def test_login_sets_default_session_when_none_exists(self):
