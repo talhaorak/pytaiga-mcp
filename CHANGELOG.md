@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v1.8.0 (2026-03-26)
+
+### Features
+
+- Add full history/audit trail tool
+  ([`881212b`](https://github.com/TETRA-2023/pytaiga-mcp/commit/881212b9f665f38f48815d7237c72cf46207da23))
+
+
 ## v1.7.0 (2026-03-26)
 
 ### Features
