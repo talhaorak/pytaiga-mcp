@@ -2394,6 +2394,200 @@ def list_comments(
     return _execute_taiga_operation("list_comments", do_list_comments, f"{object_type} {object_id}")
 
 
+@mcp.tool()
+def edit_comment(
+    object_id: int,
+    object_type: str,
+    comment_id: str,
+    new_comment: str,
+    session_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Edit an existing comment on a Taiga object.
+
+    Args:
+        object_id: The ID of the object the comment belongs to
+        object_type: Type of object: 'issue', 'task', 'user_story', 'userstory', or 'epic'
+        comment_id: The ID of the comment to edit
+        new_comment: The new comment text
+        session_id: Optional session ID (uses default if not provided)
+
+    Returns:
+        Dict confirming the edit operation.
+    """
+    if object_type not in _COMMENT_TYPE_MAP:
+        raise ValueError(
+            f"Invalid object_type '{object_type}'. "
+            f"Must be one of: {', '.join(sorted(_COMMENT_TYPE_MAP.keys()))}"
+        )
+    new_comment = new_comment.strip() if new_comment else ""
+    if not new_comment:
+        raise ValueError("New comment text must not be empty.")
+    if not comment_id or not comment_id.strip():
+        raise ValueError("Comment ID must not be empty.")
+
+    _, history_path = _COMMENT_TYPE_MAP[object_type]
+    actual_session_id = _get_session_id(session_id)
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
+
+    def do_edit():
+        taiga_client_wrapper.api.post(
+            f"/history/{history_path}/{object_id}/edit_comment",
+            json={"comment_id": comment_id, "comment": new_comment},
+        )
+        return {
+            "status": "comment_edited",
+            "object_type": object_type,
+            "object_id": object_id,
+            "comment_id": comment_id,
+        }
+
+    return _execute_taiga_operation(
+        "edit_comment", do_edit, f"{object_type} {object_id} comment {comment_id}"
+    )
+
+
+@mcp.tool()
+def delete_comment(
+    object_id: int,
+    object_type: str,
+    comment_id: str,
+    session_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Soft-delete a comment on a Taiga object. Can be restored with undelete_comment.
+
+    Args:
+        object_id: The ID of the object the comment belongs to
+        object_type: Type of object: 'issue', 'task', 'user_story', 'userstory', or 'epic'
+        comment_id: The ID of the comment to delete
+        session_id: Optional session ID (uses default if not provided)
+
+    Returns:
+        Dict confirming the delete operation.
+    """
+    if object_type not in _COMMENT_TYPE_MAP:
+        raise ValueError(
+            f"Invalid object_type '{object_type}'. "
+            f"Must be one of: {', '.join(sorted(_COMMENT_TYPE_MAP.keys()))}"
+        )
+    if not comment_id or not comment_id.strip():
+        raise ValueError("Comment ID must not be empty.")
+
+    _, history_path = _COMMENT_TYPE_MAP[object_type]
+    actual_session_id = _get_session_id(session_id)
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
+
+    def do_delete():
+        taiga_client_wrapper.api.post(
+            f"/history/{history_path}/{object_id}/delete_comment",
+            json={"comment_id": comment_id},
+        )
+        return {
+            "status": "comment_deleted",
+            "object_type": object_type,
+            "object_id": object_id,
+            "comment_id": comment_id,
+        }
+
+    return _execute_taiga_operation(
+        "delete_comment", do_delete, f"{object_type} {object_id} comment {comment_id}"
+    )
+
+
+@mcp.tool()
+def undelete_comment(
+    object_id: int,
+    object_type: str,
+    comment_id: str,
+    session_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Restore a previously soft-deleted comment on a Taiga object.
+
+    Args:
+        object_id: The ID of the object the comment belongs to
+        object_type: Type of object: 'issue', 'task', 'user_story', 'userstory', or 'epic'
+        comment_id: The ID of the comment to restore
+        session_id: Optional session ID (uses default if not provided)
+
+    Returns:
+        Dict confirming the restore operation.
+    """
+    if object_type not in _COMMENT_TYPE_MAP:
+        raise ValueError(
+            f"Invalid object_type '{object_type}'. "
+            f"Must be one of: {', '.join(sorted(_COMMENT_TYPE_MAP.keys()))}"
+        )
+    if not comment_id or not comment_id.strip():
+        raise ValueError("Comment ID must not be empty.")
+
+    _, history_path = _COMMENT_TYPE_MAP[object_type]
+    actual_session_id = _get_session_id(session_id)
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
+
+    def do_undelete():
+        taiga_client_wrapper.api.post(
+            f"/history/{history_path}/{object_id}/undelete_comment",
+            json={"comment_id": comment_id},
+        )
+        return {
+            "status": "comment_restored",
+            "object_type": object_type,
+            "object_id": object_id,
+            "comment_id": comment_id,
+        }
+
+    return _execute_taiga_operation(
+        "undelete_comment", do_undelete, f"{object_type} {object_id} comment {comment_id}"
+    )
+
+
+@mcp.tool()
+def get_comment_versions(
+    object_id: int,
+    object_type: str,
+    comment_id: str,
+    session_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Get the edit history (versions) of a comment on a Taiga object.
+
+    Args:
+        object_id: The ID of the object the comment belongs to
+        object_type: Type of object: 'issue', 'task', 'user_story', 'userstory', or 'epic'
+        comment_id: The ID of the comment
+        session_id: Optional session ID (uses default if not provided)
+
+    Returns:
+        Dict with 'comment_id' and 'versions' list containing past versions of the comment.
+    """
+    if object_type not in _COMMENT_TYPE_MAP:
+        raise ValueError(
+            f"Invalid object_type '{object_type}'. "
+            f"Must be one of: {', '.join(sorted(_COMMENT_TYPE_MAP.keys()))}"
+        )
+    if not comment_id or not comment_id.strip():
+        raise ValueError("Comment ID must not be empty.")
+
+    _, history_path = _COMMENT_TYPE_MAP[object_type]
+    actual_session_id = _get_session_id(session_id)
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
+
+    def do_get_versions():
+        result = taiga_client_wrapper.api.get(
+            f"/history/{history_path}/{object_id}/comment_versions/{comment_id}"
+        )
+        return {
+            "object_type": object_type,
+            "object_id": object_id,
+            "comment_id": comment_id,
+            "versions": result,
+        }
+
+    return _execute_taiga_operation(
+        "get_comment_versions",
+        do_get_versions,
+        f"{object_type} {object_id} comment {comment_id}",
+    )
+
+
 # --- Search ---
 
 
