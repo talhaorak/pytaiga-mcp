@@ -2265,6 +2265,54 @@ def list_comments(
     return _execute_taiga_operation("list_comments", do_list_comments, f"{object_type} {object_id}")
 
 
+# --- Search ---
+
+
+@mcp.tool()
+def search_project(
+    project_id: int,
+    text: str,
+    session_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Search across a Taiga project for user stories, tasks, issues, wiki pages, and epics.
+
+    Uses Taiga's built-in search endpoint to find items matching the given text query.
+
+    Args:
+        project_id: The project ID to search within
+        text: The search query text
+        session_id: Optional session ID (uses default if not provided)
+
+    Returns:
+        Dict with keys 'count' (total matches) and 'userstories', 'tasks', 'issues',
+        'wikipages', 'epics' — each a list of matching items with core fields.
+    """
+    text = text.strip() if text else ""
+    if not text:
+        raise ValueError("Search text cannot be empty.")
+
+    actual_session_id = _get_session_id(session_id)
+    logger.info(
+        f"Executing search_project in project {project_id} for session {actual_session_id[:8]}..."
+    )
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
+
+    def do_search():
+        result = taiga_client_wrapper.api.get(
+            "/search", params={"project": project_id, "text": text}
+        )
+        return {
+            "count": result.get("count", 0),
+            "userstories": result.get("userstories", []),
+            "tasks": result.get("tasks", []),
+            "issues": result.get("issues", []),
+            "wikipages": result.get("wikipages", []),
+            "epics": result.get("epics", []),
+        }
+
+    return _execute_taiga_operation("search_project", do_search, f"project {project_id}")
+
+
 VALID_TRANSPORTS = ("stdio", "sse", "streamable-http")
 
 
