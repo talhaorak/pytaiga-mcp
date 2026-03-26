@@ -1389,6 +1389,106 @@ class TestTaigaTools:
 
         assert result == []
 
+    # ─── Comment Management tests ──────────────────────────────────────
+
+    def test_edit_comment(self, session_setup):
+        """Test edit_comment posts to the correct history endpoint."""
+        session_id, mock_client = session_setup
+        mock_client.api.post.return_value = None
+
+        result = src.server.edit_comment(42, "issue", "abc123", "Updated text", session_id)
+
+        mock_client.api.post.assert_called_once_with(
+            "/history/issue/42/edit_comment",
+            json={"comment_id": "abc123", "comment": "Updated text"},
+        )
+        assert result["status"] == "comment_edited"
+        assert result["comment_id"] == "abc123"
+
+    def test_edit_comment_strips_text(self, session_setup):
+        """Test edit_comment strips whitespace from new comment text."""
+        session_id, mock_client = session_setup
+        mock_client.api.post.return_value = None
+
+        src.server.edit_comment(42, "task", "abc", "  trimmed  ", session_id)
+
+        mock_client.api.post.assert_called_once_with(
+            "/history/task/42/edit_comment",
+            json={"comment_id": "abc", "comment": "trimmed"},
+        )
+
+    def test_edit_comment_empty_text_raises(self, session_setup):
+        """Test edit_comment raises ValueError for empty new comment."""
+        session_id, _ = session_setup
+        with pytest.raises(ValueError, match="New comment text must not be empty"):
+            src.server.edit_comment(42, "issue", "abc", "", session_id)
+
+    def test_edit_comment_invalid_type_raises(self, session_setup):
+        """Test edit_comment raises ValueError for invalid object_type."""
+        session_id, _ = session_setup
+        with pytest.raises(ValueError, match="Invalid object_type"):
+            src.server.edit_comment(42, "invalid", "abc", "text", session_id)
+
+    def test_delete_comment(self, session_setup):
+        """Test delete_comment posts to the correct history endpoint."""
+        session_id, mock_client = session_setup
+        mock_client.api.post.return_value = None
+
+        result = src.server.delete_comment(42, "user_story", "abc123", session_id)
+
+        mock_client.api.post.assert_called_once_with(
+            "/history/userstory/42/delete_comment",
+            json={"comment_id": "abc123"},
+        )
+        assert result["status"] == "comment_deleted"
+        assert result["comment_id"] == "abc123"
+
+    def test_delete_comment_empty_id_raises(self, session_setup):
+        """Test delete_comment raises ValueError for empty comment_id."""
+        session_id, _ = session_setup
+        with pytest.raises(ValueError, match="Comment ID must not be empty"):
+            src.server.delete_comment(42, "issue", "", session_id)
+
+    def test_undelete_comment(self, session_setup):
+        """Test undelete_comment posts to the correct history endpoint."""
+        session_id, mock_client = session_setup
+        mock_client.api.post.return_value = None
+
+        result = src.server.undelete_comment(42, "epic", "abc123", session_id)
+
+        mock_client.api.post.assert_called_once_with(
+            "/history/epic/42/undelete_comment",
+            json={"comment_id": "abc123"},
+        )
+        assert result["status"] == "comment_restored"
+        assert result["comment_id"] == "abc123"
+
+    def test_undelete_comment_invalid_type_raises(self, session_setup):
+        """Test undelete_comment raises ValueError for invalid object_type."""
+        session_id, _ = session_setup
+        with pytest.raises(ValueError, match="Invalid object_type"):
+            src.server.undelete_comment(42, "wiki", "abc", session_id)
+
+    def test_get_comment_versions(self, session_setup):
+        """Test get_comment_versions returns version history."""
+        session_id, mock_client = session_setup
+        mock_client.api.get.return_value = [
+            {"date": "2026-01-01T00:00:00Z", "comment": "v1"},
+            {"date": "2026-01-02T00:00:00Z", "comment": "v2"},
+        ]
+
+        result = src.server.get_comment_versions(42, "task", "abc123", session_id)
+
+        mock_client.api.get.assert_called_once_with("/history/task/42/comment_versions/abc123")
+        assert result["comment_id"] == "abc123"
+        assert len(result["versions"]) == 2
+
+    def test_get_comment_versions_empty_id_raises(self, session_setup):
+        """Test get_comment_versions raises ValueError for empty comment_id."""
+        session_id, _ = session_setup
+        with pytest.raises(ValueError, match="Comment ID must not be empty"):
+            src.server.get_comment_versions(42, "issue", "", session_id)
+
     # ─── Login default session tests (PR: fix/login-default-session-and-slug) ──
 
     def test_login_sets_default_session_when_none_exists(self):
