@@ -1664,6 +1664,139 @@ def get_issue_types(project_id: int, session_id: Optional[str] = None) -> List[D
     )
 
 
+# --- Story Points Tools ---
+
+
+@mcp.tool()
+def list_points(
+    project_id: int,
+    session_id: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """List the story point values defined for a project.
+
+    Args:
+        project_id: The project ID
+        session_id: Optional session ID (uses default if not provided)
+
+    Returns:
+        List of point dicts with id, name, value, and order.
+    """
+    actual_session_id = _get_session_id(session_id)
+    logger.info(
+        f"Executing list_points for project {project_id} session {actual_session_id[:8]}..."
+    )
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
+
+    return _execute_taiga_operation(
+        "list_points",
+        lambda: taiga_client_wrapper.list_resources("points", project_id=project_id),
+        f"project {project_id}",
+    )
+
+
+@mcp.tool()
+def create_point(
+    project_id: int,
+    name: str,
+    value: Optional[float] = None,
+    session_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Create a new story point value for a project.
+
+    Args:
+        project_id: The project ID
+        name: The name/label for the point value (e.g., '1', '2', '3', '5', '8', '?')
+        value: Optional numeric value for ordering/calculation. None for non-numeric points.
+        session_id: Optional session ID (uses default if not provided)
+
+    Returns:
+        Dict with the created point details.
+    """
+    name = name.strip() if name else ""
+    if not name:
+        raise ValueError("Point name cannot be empty.")
+
+    actual_session_id = _get_session_id(session_id)
+    logger.info(
+        f"Executing create_point '{name}' in project {project_id} "
+        f"session {actual_session_id[:8]}..."
+    )
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
+
+    def do_create():
+        payload: Dict[str, Any] = {"project": project_id, "name": name}
+        if value is not None:
+            payload["value"] = value
+        return taiga_client_wrapper.api.post("/points", json=payload)
+
+    return _execute_taiga_operation("create_point", do_create, f"project {project_id}")
+
+
+@mcp.tool()
+def update_point(
+    point_id: int,
+    name: Optional[str] = None,
+    value: Optional[float] = None,
+    session_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Update an existing story point value.
+
+    Args:
+        point_id: The ID of the point to update
+        name: New name for the point value
+        value: New numeric value
+        session_id: Optional session ID (uses default if not provided)
+
+    Returns:
+        Dict with the updated point details.
+    """
+    if name is not None:
+        name = name.strip()
+        if not name:
+            raise ValueError("Point name cannot be empty.")
+    if name is None and value is None:
+        raise ValueError("At least one of 'name' or 'value' must be provided.")
+
+    actual_session_id = _get_session_id(session_id)
+    logger.info(f"Executing update_point {point_id} session {actual_session_id[:8]}...")
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
+
+    def do_update():
+        payload: Dict[str, Any] = {}
+        if name is not None:
+            payload["name"] = name
+        if value is not None:
+            payload["value"] = value
+        return taiga_client_wrapper.api.patch(f"/points/{point_id}", json=payload)
+
+    return _execute_taiga_operation("update_point", do_update, f"point {point_id}")
+
+
+@mcp.tool()
+def delete_point(
+    point_id: int,
+    session_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Delete a story point value.
+
+    Args:
+        point_id: The ID of the point to delete
+        session_id: Optional session ID (uses default if not provided)
+
+    Returns:
+        Dict confirming the delete operation.
+    """
+    actual_session_id = _get_session_id(session_id)
+    logger.warning(f"Executing delete_point {point_id} session {actual_session_id[:8]}...")
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
+
+    def do_delete():
+        taiga_client_wrapper.api.delete(f"/points/{point_id}")
+        return {"status": "deleted", "point_id": point_id}
+
+    return _execute_taiga_operation("delete_point", do_delete, f"point {point_id}")
+
+
 # --- Epic Tools ---
 
 

@@ -23,6 +23,7 @@ _RESOURCE_ENDPOINTS = {
     "issue_types": "/issue-types",
     "priorities": "/priorities",
     "severities": "/severities",
+    "points": "/points",
 }
 
 _NO_PAGINATION_HEADERS = {"x-disable-pagination": "True"}

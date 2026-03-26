@@ -911,6 +911,83 @@ class TestTaigaTools:
         assert len(result) == 2
         mock_client.list_resources.assert_called_once_with("issue_types", project_id=123)
 
+    # ─── Story Points tools tests ─────────────────────────────────────
+
+    def test_list_points(self, session_setup):
+        """Test list_points returns point values for a project."""
+        session_id, mock_client = session_setup
+        mock_client.list_resources.return_value = [
+            {"id": 1, "name": "1", "value": 1.0},
+            {"id": 2, "name": "3", "value": 3.0},
+        ]
+
+        result = src.server.list_points(21, session_id)
+
+        assert len(result) == 2
+        mock_client.list_resources.assert_called_once_with("points", project_id=21)
+
+    def test_create_point(self, session_setup):
+        """Test create_point creates a new point value."""
+        session_id, mock_client = session_setup
+        mock_client.api.post.return_value = {"id": 10, "name": "5", "value": 5.0}
+
+        result = src.server.create_point(21, "5", value=5.0, session_id=session_id)
+
+        mock_client.api.post.assert_called_once_with(
+            "/points", json={"project": 21, "name": "5", "value": 5.0}
+        )
+        assert result["name"] == "5"
+
+    def test_create_point_without_value(self, session_setup):
+        """Test create_point without numeric value (e.g., '?' point)."""
+        session_id, mock_client = session_setup
+        mock_client.api.post.return_value = {"id": 11, "name": "?"}
+
+        src.server.create_point(21, "?", session_id=session_id)
+
+        mock_client.api.post.assert_called_once_with("/points", json={"project": 21, "name": "?"})
+
+    def test_create_point_empty_name_raises(self, session_setup):
+        """Test create_point raises ValueError for empty name."""
+        session_id, _ = session_setup
+        with pytest.raises(ValueError, match="Point name cannot be empty"):
+            src.server.create_point(21, "", session_id=session_id)
+
+    def test_update_point(self, session_setup):
+        """Test update_point updates a point value."""
+        session_id, mock_client = session_setup
+        mock_client.api.patch.return_value = {"id": 10, "name": "8", "value": 8.0}
+
+        result = src.server.update_point(10, name="8", value=8.0, session_id=session_id)
+
+        mock_client.api.patch.assert_called_once_with(
+            "/points/10", json={"name": "8", "value": 8.0}
+        )
+        assert result["name"] == "8"
+
+    def test_update_point_no_changes_raises(self, session_setup):
+        """Test update_point raises ValueError when no fields provided."""
+        session_id, _ = session_setup
+        with pytest.raises(ValueError, match="At least one of"):
+            src.server.update_point(10, session_id=session_id)
+
+    def test_update_point_empty_name_raises(self, session_setup):
+        """Test update_point raises ValueError for empty name."""
+        session_id, _ = session_setup
+        with pytest.raises(ValueError, match="Point name cannot be empty"):
+            src.server.update_point(10, name="  ", session_id=session_id)
+
+    def test_delete_point(self, session_setup):
+        """Test delete_point deletes a point value."""
+        session_id, mock_client = session_setup
+        mock_client.api.delete.return_value = None
+
+        result = src.server.delete_point(10, session_id)
+
+        mock_client.api.delete.assert_called_once_with("/points/10")
+        assert result["status"] == "deleted"
+        assert result["point_id"] == 10
+
     # ─── Epic tools tests ────────────────────────────────────────────
 
     def test_list_epics(self, session_setup):
