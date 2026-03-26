@@ -330,6 +330,112 @@ class TestTaigaTools:
         assert result["project_id"] == 123
         mock_client.api.projects.delete.assert_called_once_with(project_id=123)
 
+    # ─── Project Tag Management tests ─────────────────────────────────
+
+    def test_get_project_tags_colors(self, session_setup):
+        """Test get_project_tags_colors returns tag-color mapping."""
+        session_id, mock_client = session_setup
+        mock_client.api.get.return_value = {"bug": "#FF0000", "feature": "#00FF00"}
+
+        result = src.server.get_project_tags_colors(21, session_id)
+
+        mock_client.api.get.assert_called_once_with("/projects/21/tags_colors")
+        assert result == {"bug": "#FF0000", "feature": "#00FF00"}
+
+    def test_edit_project_tag_rename(self, session_setup):
+        """Test edit_project_tag renames a tag."""
+        session_id, mock_client = session_setup
+        mock_client.api.post.return_value = None
+
+        result = src.server.edit_project_tag(
+            21, "old-name", new_tag="new-name", session_id=session_id
+        )
+
+        mock_client.api.post.assert_called_once_with(
+            "/projects/21/edit_tag", json={"tag": "old-name", "new_tag": "new-name"}
+        )
+        assert result["status"] == "tag_updated"
+        assert result["new_tag"] == "new-name"
+
+    def test_edit_project_tag_recolor(self, session_setup):
+        """Test edit_project_tag changes tag color."""
+        session_id, mock_client = session_setup
+        mock_client.api.post.return_value = None
+
+        result = src.server.edit_project_tag(21, "bug", color="#FF0000", session_id=session_id)
+
+        mock_client.api.post.assert_called_once_with(
+            "/projects/21/edit_tag", json={"tag": "bug", "color": "#FF0000"}
+        )
+        assert result["status"] == "tag_updated"
+        assert result["color"] == "#FF0000"
+
+    def test_edit_project_tag_empty_name_raises(self, session_setup):
+        """Test edit_project_tag raises ValueError for empty tag name."""
+        session_id, _ = session_setup
+        with pytest.raises(ValueError, match="Tag name cannot be empty"):
+            src.server.edit_project_tag(21, "", color="#FF0000", session_id=session_id)
+
+    def test_edit_project_tag_rename_and_recolor(self, session_setup):
+        """Test edit_project_tag with both color and new_tag."""
+        session_id, mock_client = session_setup
+        mock_client.api.post.return_value = None
+
+        result = src.server.edit_project_tag(
+            21, "bug", color="#0000FF", new_tag="defect", session_id=session_id
+        )
+
+        mock_client.api.post.assert_called_once_with(
+            "/projects/21/edit_tag",
+            json={"tag": "bug", "color": "#0000FF", "new_tag": "defect"},
+        )
+        assert result["status"] == "tag_updated"
+        assert result["color"] == "#0000FF"
+        assert result["new_tag"] == "defect"
+
+    def test_edit_project_tag_no_changes_raises(self, session_setup):
+        """Test edit_project_tag raises ValueError when neither color nor new_tag provided."""
+        session_id, _ = session_setup
+        with pytest.raises(ValueError, match="At least one of"):
+            src.server.edit_project_tag(21, "bug", session_id=session_id)
+
+    def test_mix_project_tags(self, session_setup):
+        """Test mix_project_tags merges tags."""
+        session_id, mock_client = session_setup
+        mock_client.api.post.return_value = None
+
+        result = src.server.mix_project_tags(21, ["bug", "defect"], "bug", session_id)
+
+        mock_client.api.post.assert_called_once_with(
+            "/projects/21/mix_tags", json={"from_tags": ["bug", "defect"], "to_tag": "bug"}
+        )
+        assert result["status"] == "tags_merged"
+        assert result["from_tags"] == ["bug", "defect"]
+        assert result["to_tag"] == "bug"
+
+    def test_mix_project_tags_empty_to_tag_raises(self, session_setup):
+        """Test mix_project_tags raises ValueError for empty target tag."""
+        session_id, _ = session_setup
+        with pytest.raises(ValueError, match="Target tag name"):
+            src.server.mix_project_tags(21, ["bug"], "", session_id)
+
+    def test_mix_project_tags_empty_from_tags_raises(self, session_setup):
+        """Test mix_project_tags raises ValueError for empty from_tags list."""
+        session_id, _ = session_setup
+        with pytest.raises(ValueError, match="from_tags"):
+            src.server.mix_project_tags(21, [], "bug", session_id)
+
+    def test_mix_project_tags_strips_whitespace(self, session_setup):
+        """Test mix_project_tags strips whitespace from tag names."""
+        session_id, mock_client = session_setup
+        mock_client.api.post.return_value = None
+
+        src.server.mix_project_tags(21, ["  bug  ", "defect", "  "], "  merged  ", session_id)
+
+        mock_client.api.post.assert_called_once_with(
+            "/projects/21/mix_tags", json={"from_tags": ["bug", "defect"], "to_tag": "merged"}
+        )
+
     # ─── User Story tools tests ──────────────────────────────────────
 
     def test_list_user_stories(self, session_setup):
