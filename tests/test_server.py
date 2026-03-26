@@ -1313,6 +1313,68 @@ class TestTaigaTools:
             assert src.server.active_sessions[src.server.DEFAULT_SESSION_ID] is existing_default
             src.server.active_sessions.clear()
 
+    # ─── Search tests ──────────────────────────────────────────────────
+
+    def test_search_project(self, session_setup):
+        """Test search_project returns structured results from Taiga search API."""
+        session_id, mock_client = session_setup
+        mock_client.api.get.return_value = {
+            "count": 3,
+            "userstories": [{"id": 1, "ref": 10, "subject": "US match"}],
+            "tasks": [{"id": 2, "ref": 20, "subject": "Task match"}],
+            "issues": [{"id": 3, "ref": 30, "subject": "Issue match"}],
+            "wikipages": [],
+            "epics": [],
+        }
+
+        result = src.server.search_project(21, "match", session_id)
+
+        mock_client.api.get.assert_called_once_with(
+            "/search", params={"project": 21, "text": "match"}
+        )
+        assert result["count"] == 3
+        assert len(result["userstories"]) == 1
+        assert len(result["tasks"]) == 1
+        assert len(result["issues"]) == 1
+        assert result["wikipages"] == []
+        assert result["epics"] == []
+
+    def test_search_project_empty_text_raises(self, session_setup):
+        """Test search_project raises ValueError for empty search text."""
+        session_id, _ = session_setup
+        with pytest.raises(ValueError, match="Search text cannot be empty"):
+            src.server.search_project(21, "", session_id)
+
+    def test_search_project_whitespace_text_raises(self, session_setup):
+        """Test search_project raises ValueError for whitespace-only search text."""
+        session_id, _ = session_setup
+        with pytest.raises(ValueError, match="Search text cannot be empty"):
+            src.server.search_project(21, "   ", session_id)
+
+    def test_search_project_strips_text(self, session_setup):
+        """Test search_project strips whitespace from search text."""
+        session_id, mock_client = session_setup
+        mock_client.api.get.return_value = {
+            "count": 0,
+            "userstories": [],
+            "tasks": [],
+            "issues": [],
+            "wikipages": [],
+            "epics": [],
+        }
+
+        src.server.search_project(21, "  hello  ", session_id)
+
+        mock_client.api.get.assert_called_once_with(
+            "/search", params={"project": 21, "text": "hello"}
+        )
+
+    def test_search_project_no_session_raises(self):
+        """Test search_project raises ValueError when no session available."""
+        src.server.active_sessions.clear()
+        with pytest.raises(ValueError, match="No session_id provided"):
+            src.server.search_project(21, "query")
+
 
 # ─── Response Filtering tests ─────────────────────────────────────────
 
