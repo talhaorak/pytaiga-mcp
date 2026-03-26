@@ -2780,6 +2780,325 @@ def get_history(
     return _execute_taiga_operation("get_history", do_get_history, f"{object_type} {object_id}")
 
 
+# --- Bulk Operations ---
+
+
+@mcp.tool(
+    "bulk_create_user_stories",
+    description="Creates multiple user stories at once from a list of subjects. All stories are created in the specified project. Returns the list of created stories. Uses default session if session_id not provided.",
+)
+def bulk_create_user_stories(
+    project_id: int,
+    subjects: List[str],
+    session_id: Optional[str] = None,
+    verbosity: str = "standard",
+) -> List[Dict[str, Any]]:
+    """Bulk-creates user stories from a list of subject strings."""
+    actual_session_id = _get_session_id(session_id)
+    if not subjects:
+        raise ValueError("Subjects list cannot be empty.")
+    cleaned = [s.strip() for s in subjects if s and s.strip()]
+    if not cleaned:
+        raise ValueError("Subjects list contains only empty strings.")
+    logger.info(
+        f"Executing bulk_create_user_stories: {len(cleaned)} stories in project {project_id}, "
+        f"session {actual_session_id[:8]}..."
+    )
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
+
+    def do_bulk():
+        bulk_stories = "\n".join(cleaned)
+        result = taiga_client_wrapper.api.post(
+            "/userstories/bulk_create",
+            json={"project_id": project_id, "bulk_stories": bulk_stories},
+        )
+        return result if isinstance(result, list) else []
+
+    result = _execute_taiga_operation(
+        "bulk_create_user_stories", do_bulk, f"{len(cleaned)} stories in project {project_id}"
+    )
+    return _filter_response(result, "user_story", verbosity)
+
+
+@mcp.tool(
+    "bulk_create_tasks",
+    description="Creates multiple tasks at once from a list of subjects. All tasks are created in the specified project, optionally linked to a user story. Returns the list of created tasks. Uses default session if session_id not provided.",
+)
+def bulk_create_tasks(
+    project_id: int,
+    subjects: List[str],
+    user_story_id: Optional[int] = None,
+    session_id: Optional[str] = None,
+    verbosity: str = "standard",
+) -> List[Dict[str, Any]]:
+    """Bulk-creates tasks from a list of subject strings."""
+    actual_session_id = _get_session_id(session_id)
+    if not subjects:
+        raise ValueError("Subjects list cannot be empty.")
+    cleaned = [s.strip() for s in subjects if s and s.strip()]
+    if not cleaned:
+        raise ValueError("Subjects list contains only empty strings.")
+    logger.info(
+        f"Executing bulk_create_tasks: {len(cleaned)} tasks in project {project_id}, "
+        f"session {actual_session_id[:8]}..."
+    )
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
+
+    def do_bulk():
+        bulk_tasks = "\n".join(cleaned)
+        payload: Dict[str, Any] = {"project_id": project_id, "bulk_tasks": bulk_tasks}
+        if user_story_id is not None:
+            payload["us_id"] = user_story_id
+        result = taiga_client_wrapper.api.post("/tasks/bulk_create", json=payload)
+        return result if isinstance(result, list) else []
+
+    result = _execute_taiga_operation(
+        "bulk_create_tasks", do_bulk, f"{len(cleaned)} tasks in project {project_id}"
+    )
+    return _filter_response(result, "task", verbosity)
+
+
+@mcp.tool(
+    "bulk_create_issues",
+    description="Creates multiple issues at once from a list of subjects. All issues are created in the specified project. Returns the list of created issues. Uses default session if session_id not provided.",
+)
+def bulk_create_issues(
+    project_id: int,
+    subjects: List[str],
+    session_id: Optional[str] = None,
+    verbosity: str = "standard",
+) -> List[Dict[str, Any]]:
+    """Bulk-creates issues from a list of subject strings."""
+    actual_session_id = _get_session_id(session_id)
+    if not subjects:
+        raise ValueError("Subjects list cannot be empty.")
+    cleaned = [s.strip() for s in subjects if s and s.strip()]
+    if not cleaned:
+        raise ValueError("Subjects list contains only empty strings.")
+    logger.info(
+        f"Executing bulk_create_issues: {len(cleaned)} issues in project {project_id}, "
+        f"session {actual_session_id[:8]}..."
+    )
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
+
+    def do_bulk():
+        bulk_issues = "\n".join(cleaned)
+        result = taiga_client_wrapper.api.post(
+            "/issues/bulk_create",
+            json={"project_id": project_id, "bulk_issues": bulk_issues},
+        )
+        return result if isinstance(result, list) else []
+
+    result = _execute_taiga_operation(
+        "bulk_create_issues", do_bulk, f"{len(cleaned)} issues in project {project_id}"
+    )
+    return _filter_response(result, "issue", verbosity)
+
+
+@mcp.tool(
+    "bulk_create_epics",
+    description="Creates multiple epics at once from a list of subjects. All epics are created in the specified project. Returns the list of created epics. Uses default session if session_id not provided.",
+)
+def bulk_create_epics(
+    project_id: int,
+    subjects: List[str],
+    session_id: Optional[str] = None,
+    verbosity: str = "standard",
+) -> List[Dict[str, Any]]:
+    """Bulk-creates epics from a list of subject strings."""
+    actual_session_id = _get_session_id(session_id)
+    if not subjects:
+        raise ValueError("Subjects list cannot be empty.")
+    cleaned = [s.strip() for s in subjects if s and s.strip()]
+    if not cleaned:
+        raise ValueError("Subjects list contains only empty strings.")
+    logger.info(
+        f"Executing bulk_create_epics: {len(cleaned)} epics in project {project_id}, "
+        f"session {actual_session_id[:8]}..."
+    )
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
+
+    def do_bulk():
+        bulk_epics = "\n".join(cleaned)
+        result = taiga_client_wrapper.api.post(
+            "/epics/bulk_create",
+            json={"project_id": project_id, "bulk_epics": bulk_epics},
+        )
+        return result if isinstance(result, list) else []
+
+    result = _execute_taiga_operation(
+        "bulk_create_epics", do_bulk, f"{len(cleaned)} epics in project {project_id}"
+    )
+    return _filter_response(result, "epic", verbosity)
+
+
+@mcp.tool(
+    "bulk_update_user_story_milestone",
+    description="Moves multiple user stories to a sprint (milestone) in a single call. Requires project_id, milestone_id, and a list of user story IDs (bulk_stories). Uses default session if session_id not provided.",
+)
+def bulk_update_user_story_milestone(
+    project_id: int,
+    milestone_id: int,
+    bulk_stories: List[Dict[str, int]],
+    session_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Moves multiple user stories to a milestone. bulk_stories is a list of {us_id, order} dicts."""
+    actual_session_id = _get_session_id(session_id)
+    if not bulk_stories:
+        raise ValueError("bulk_stories list cannot be empty.")
+    logger.info(
+        f"Executing bulk_update_user_story_milestone: {len(bulk_stories)} stories -> "
+        f"milestone {milestone_id} in project {project_id}, session {actual_session_id[:8]}..."
+    )
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
+
+    def do_bulk():
+        taiga_client_wrapper.api.post(
+            "/userstories/bulk_update_milestone",
+            json={
+                "project_id": project_id,
+                "milestone_id": milestone_id,
+                "bulk_stories": bulk_stories,
+            },
+        )
+        return {
+            "status": "updated",
+            "project_id": project_id,
+            "milestone_id": milestone_id,
+            "stories_moved": len(bulk_stories),
+        }
+
+    return _execute_taiga_operation(
+        "bulk_update_user_story_milestone",
+        do_bulk,
+        f"{len(bulk_stories)} stories to milestone {milestone_id}",
+    )
+
+
+@mcp.tool(
+    "bulk_update_user_story_order",
+    description="Reorders multiple user stories in bulk. order_type must be 'backlog', 'kanban', or 'sprint'. bulk_stories is a list of {us_id, order} dicts. Uses default session if session_id not provided.",
+)
+def bulk_update_user_story_order(
+    project_id: int,
+    order_type: str,
+    bulk_stories: List[Dict[str, int]],
+    session_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Reorders user stories in bulk for a given view (backlog, kanban, or sprint)."""
+    actual_session_id = _get_session_id(session_id)
+    valid_order_types = {"backlog", "kanban", "sprint"}
+    order_type = order_type.strip().lower()
+    if order_type not in valid_order_types:
+        raise ValueError(
+            f"Invalid order_type '{order_type}'. Must be one of: {sorted(valid_order_types)}"
+        )
+    if not bulk_stories:
+        raise ValueError("bulk_stories list cannot be empty.")
+    logger.info(
+        f"Executing bulk_update_user_story_order: {len(bulk_stories)} stories, "
+        f"order_type={order_type} in project {project_id}, session {actual_session_id[:8]}..."
+    )
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
+
+    def do_bulk():
+        endpoint = f"/userstories/bulk_update_{order_type}_order"
+        taiga_client_wrapper.api.post(
+            endpoint,
+            json={"project_id": project_id, "bulk_stories": bulk_stories},
+        )
+        return {
+            "status": "reordered",
+            "project_id": project_id,
+            "order_type": order_type,
+            "stories_reordered": len(bulk_stories),
+        }
+
+    return _execute_taiga_operation(
+        "bulk_update_user_story_order",
+        do_bulk,
+        f"{len(bulk_stories)} stories ({order_type}) in project {project_id}",
+    )
+
+
+@mcp.tool(
+    "bulk_create_memberships",
+    description="Invites multiple users to a project at once. Each invitation needs an email and role_id. Uses default session if session_id not provided.",
+)
+def bulk_create_memberships(
+    project_id: int,
+    members: List[Dict[str, Any]],
+    session_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Bulk-invites members to a project. members is a list of {role_id, email} dicts."""
+    actual_session_id = _get_session_id(session_id)
+    if not members:
+        raise ValueError("Members list cannot be empty.")
+    for m in members:
+        if not m.get("email") or not m.get("role_id"):
+            raise ValueError("Each member must have 'email' and 'role_id' fields.")
+    logger.info(
+        f"Executing bulk_create_memberships: {len(members)} members in project {project_id}, "
+        f"session {actual_session_id[:8]}..."
+    )
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
+
+    def do_bulk():
+        result = taiga_client_wrapper.api.post(
+            "/memberships/bulk_create",
+            json={"project_id": project_id, "bulk_memberships": members},
+        )
+        if isinstance(result, list):
+            return {"status": "invited", "project_id": project_id, "members_invited": result}
+        return {
+            "status": "invited",
+            "project_id": project_id,
+            "members_count": len(members),
+        }
+
+    return _execute_taiga_operation(
+        "bulk_create_memberships", do_bulk, f"{len(members)} members in project {project_id}"
+    )
+
+
+@mcp.tool(
+    "bulk_link_user_stories_to_epic",
+    description="Links multiple user stories to an epic in a single call. Uses default session if session_id not provided.",
+)
+def bulk_link_user_stories_to_epic(
+    epic_id: int,
+    user_story_ids: List[int],
+    session_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Links multiple user stories to an epic at once."""
+    actual_session_id = _get_session_id(session_id)
+    if not user_story_ids:
+        raise ValueError("user_story_ids list cannot be empty.")
+    logger.info(
+        f"Executing bulk_link_user_stories_to_epic: {len(user_story_ids)} stories -> "
+        f"epic {epic_id}, session {actual_session_id[:8]}..."
+    )
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
+
+    def do_bulk():
+        taiga_client_wrapper.api.post(
+            f"/epics/{epic_id}/related_userstories/bulk_create",
+            json={"project_id": epic_id, "bulk_userstories": user_story_ids},
+        )
+        return {
+            "status": "linked",
+            "epic_id": epic_id,
+            "user_story_ids": user_story_ids,
+            "count": len(user_story_ids),
+        }
+
+    return _execute_taiga_operation(
+        "bulk_link_user_stories_to_epic",
+        do_bulk,
+        f"{len(user_story_ids)} stories to epic {epic_id}",
+    )
+
+
 # --- Search ---
 
 
