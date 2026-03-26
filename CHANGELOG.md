@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v1.7.0 (2026-03-26)
+
+### Features
+
+- Add comment edit/delete/undelete and version history tools
+  ([`174de29`](https://github.com/TETRA-2023/pytaiga-mcp/commit/174de29d96d8ab4d6ccac709664cabe24b41222b))
+
+
 ## v1.6.0 (2026-03-26)
 
 ### Features
