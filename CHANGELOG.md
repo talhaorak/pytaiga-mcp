@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v1.6.0 (2026-03-26)
+
+### Features
+
+- Add project tag management tools
+  ([`7d425c1`](https://github.com/TETRA-2023/pytaiga-mcp/commit/7d425c15ee69c4dbe3b046ab98a900fa8bcd3716))
+
+
 ## v1.5.0 (2026-03-26)
 
 ### Features
