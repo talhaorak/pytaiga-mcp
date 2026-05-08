@@ -430,6 +430,68 @@ class TestTaigaTools:
         assert result["subject"] == "Same"
         mock_client.api.user_stories.edit.assert_not_called()
 
+    def test_update_user_story_append_description_and_add_tags(self, session_setup):
+        """Test merge-safe story updates."""
+        session_id, mock_client = session_setup
+        mock_client.api.user_stories.get.return_value = {
+            "id": 456,
+            "description": "Old desc",
+            "tags": ["existing"],
+            "version": 1,
+        }
+        mock_client.api.user_stories.edit.return_value = {
+            "id": 456,
+            "description": "Old desc\n\nNew note",
+            "tags": ["existing", "new"],
+            "version": 2,
+        }
+
+        result = src.server.update_user_story(
+            456,
+            "{}",
+            session_id,
+            append_description="New note",
+            add_tags=["new"],
+        )
+
+        assert result["description"] == "Old desc\n\nNew note"
+        mock_client.api.user_stories.edit.assert_called_once_with(
+            user_story_id=456,
+            version=1,
+            description="Old desc\n\nNew note",
+            tags=["existing", "new"],
+        )
+
+    def test_archive_or_close_user_story(self, session_setup):
+        """Test story soft-delete via closed status and archive tag."""
+        session_id, mock_client = session_setup
+        mock_client.api.user_stories.get.return_value = {
+            "id": 456,
+            "project": 123,
+            "tags": ["existing"],
+            "version": 1,
+        }
+        mock_client.api.userstory_statuses.list.return_value = [
+            {"id": 1, "name": "Open", "is_closed": False},
+            {"id": 2, "name": "Closed", "is_closed": True},
+        ]
+        mock_client.api.user_stories.edit.return_value = {
+            "id": 456,
+            "status": 2,
+            "tags": ["archived-by-mcp", "existing"],
+            "version": 2,
+        }
+
+        result = src.server.archive_or_close_user_story(456, session_id=session_id)
+
+        assert result["status"] == 2
+        mock_client.api.user_stories.edit.assert_called_once_with(
+            user_story_id=456,
+            version=1,
+            status=2,
+            tags=["archived-by-mcp", "existing"],
+        )
+
     def test_delete_user_story(self, session_setup):
         """Test delete_user_story."""
         session_id, mock_client = session_setup
@@ -527,6 +589,18 @@ class TestTaigaTools:
             project=123, subject="Task", data={"description": "Some desc"}
         )
 
+    def test_create_task_with_idempotency_key_deduplicates(self, session_setup):
+        """Test task creation deduplication for retried requests."""
+        src.server.idempotency_cache.clear()
+        session_id, mock_client = session_setup
+        mock_client.api.tasks.create.return_value = {"id": 789, "subject": "Task", "version": 1}
+
+        first = src.server.create_task(123, "Task", "{}", session_id, idempotency_key="retry-1")
+        second = src.server.create_task(123, "Task", "{}", session_id, idempotency_key="retry-1")
+
+        assert first == second
+        mock_client.api.tasks.create.assert_called_once_with(project=123, subject="Task", data=None)
+
     def test_create_task_empty_subject(self, session_setup):
         """Test create_task raises for empty subject."""
         session_id, _ = session_setup
@@ -592,6 +666,37 @@ class TestTaigaTools:
         assert result["subject"] == "Same"
         mock_client.api.tasks.edit.assert_not_called()
 
+    def test_update_task_append_description_and_add_tags(self, session_setup):
+        """Test merge-safe task updates."""
+        session_id, mock_client = session_setup
+        mock_client.api.tasks.get.return_value = {
+            "id": 789,
+            "description": "Old desc",
+            "tags": ["existing"],
+            "version": 1,
+        }
+        mock_client.api.tasks.edit.return_value = {
+            "id": 789,
+            "description": "Old desc\n\nNew note",
+            "tags": ["existing", "new"],
+            "version": 2,
+        }
+
+        result = src.server.update_task(
+            789,
+            "{}",
+            session_id,
+            append_description="New note",
+            add_tags=["new"],
+        )
+
+        assert result["description"] == "Old desc\n\nNew note"
+        mock_client.api.tasks.edit.assert_called_once_with(
+            task_id=789,
+            version=1,
+            data={"description": "Old desc\n\nNew note", "tags": ["existing", "new"]},
+        )
+
     def test_delete_task(self, session_setup):
         """Test delete_task."""
         session_id, mock_client = session_setup
@@ -599,6 +704,35 @@ class TestTaigaTools:
         result = src.server.delete_task(789, session_id)
         assert result["status"] == "deleted"
         assert result["task_id"] == 789
+
+    def test_archive_or_close_task(self, session_setup):
+        """Test task soft-delete via closed status and archive tag."""
+        session_id, mock_client = session_setup
+        mock_client.api.tasks.get.return_value = {
+            "id": 789,
+            "project": 123,
+            "tags": ["existing"],
+            "version": 1,
+        }
+        mock_client.api.task_statuses.list.return_value = [
+            {"id": 1, "name": "Open", "is_closed": False},
+            {"id": 2, "name": "Closed", "is_closed": True},
+        ]
+        mock_client.api.tasks.edit.return_value = {
+            "id": 789,
+            "status": 2,
+            "tags": ["archived-by-mcp", "existing"],
+            "version": 2,
+        }
+
+        result = src.server.archive_or_close_task(789, session_id=session_id)
+
+        assert result["status"] == 2
+        mock_client.api.tasks.edit.assert_called_once_with(
+            task_id=789,
+            version=1,
+            data={"status": 2, "tags": ["archived-by-mcp", "existing"]},
+        )
 
     def test_assign_task_to_user(self, session_setup):
         """Test assign_task_to_user delegates to update_task."""
