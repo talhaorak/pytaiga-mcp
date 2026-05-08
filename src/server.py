@@ -4,7 +4,9 @@ import json
 import logging
 import logging.config
 import uuid
+from collections import OrderedDict
 from contextlib import asynccontextmanager
+from threading import RLock
 from typing import Any, AsyncIterator, Dict, List, Optional
 
 from mcp.server.fastmcp import FastMCP
@@ -419,9 +421,11 @@ def _validate_kwargs(resource_type: str, kwargs: dict, strict: bool = False) -> 
 # Store active sessions: session_id -> TaigaClientWrapper instance
 active_sessions: Dict[str, TaigaClientWrapper] = {}
 
-# In-memory deduplication for task creation. This prevents accidental duplicate
-# creates from client retries during the current server process lifetime.
-idempotency_cache: Dict[str, Dict[str, Any]] = {}
+# In-memory deduplication for task creation. Bounded and guarded because MCP
+# servers can handle concurrent tool calls in the same process.
+MAX_IDEMPOTENCY_CACHE_SIZE = 1024
+idempotency_cache: OrderedDict[str, Dict[str, Any]] = OrderedDict()
+idempotency_cache_lock = RLock()
 
 # Reserved session ID for auto-authenticated session from environment variables
 DEFAULT_SESSION_ID = "default"
@@ -586,6 +590,22 @@ def _make_idempotency_cache_key(raw_key: str, project_id: int, subject: str, dat
     return f"{raw_key}:{digest}"
 
 
+def _get_idempotency_cache(cache_key: str) -> Optional[Dict[str, Any]]:
+    with idempotency_cache_lock:
+        cached = idempotency_cache.get(cache_key)
+        if cached is not None:
+            idempotency_cache.move_to_end(cache_key)
+        return cached
+
+
+def _set_idempotency_cache(cache_key: str, result: Dict[str, Any]) -> None:
+    with idempotency_cache_lock:
+        idempotency_cache[cache_key] = result
+        idempotency_cache.move_to_end(cache_key)
+        while len(idempotency_cache) > MAX_IDEMPOTENCY_CACHE_SIZE:
+            idempotency_cache.popitem(last=False)
+
+
 def _apply_append_updates(
     parsed_kwargs: dict,
     current_item: dict,
@@ -612,6 +632,46 @@ def _apply_append_updates(
         updated_kwargs["tags"] = sorted(existing_tags | set(add_tags))
 
     return updated_kwargs
+
+
+def _archive_or_close_item(
+    taiga_client_wrapper: TaigaClientWrapper,
+    item_id: int,
+    item_type: str,
+    api_collection_name: str,
+    status_collection_name: str,
+    id_kwarg_name: str,
+    closed_status_id: Optional[int],
+    add_archive_tag: bool,
+    use_data_payload: bool = False,
+) -> Dict[str, Any]:
+    api_collection = getattr(taiga_client_wrapper.api, api_collection_name)
+    status_collection = getattr(taiga_client_wrapper.api, status_collection_name)
+    current_item = api_collection.get(item_id)
+    project_id = current_item.get("project")
+    status_id = closed_status_id
+
+    if status_id is None:
+        statuses = status_collection.list(query_params={"project": project_id})
+        closed_statuses = [status for status in statuses if status.get("is_closed")]
+        if not closed_statuses:
+            raise ValueError(f"No closed {item_type} status found for project {project_id}.")
+        status_id = closed_statuses[0]["id"]
+
+    payload: Dict[str, Any] = {"status": status_id}
+    if add_archive_tag:
+        payload["tags"] = sorted(set(current_item.get("tags") or []) | {"archived-by-mcp"})
+
+    version = current_item.get("version")
+    if version is None:
+        raise ValueError(f"Could not determine version for {item_type} {item_id}.")
+
+    edit_kwargs: Dict[str, Any] = {id_kwarg_name: item_id, "version": version}
+    if use_data_payload:
+        edit_kwargs["data"] = payload
+    else:
+        edit_kwargs.update(payload)
+    return api_collection.edit(**edit_kwargs)
 
 
 def _get_item_by_ref(
@@ -1089,29 +1149,15 @@ def archive_or_close_user_story(
     taiga_client_wrapper = _get_authenticated_client(actual_session_id)
 
     def do_archive():
-        current_story = taiga_client_wrapper.api.user_stories.get(user_story_id)
-        project_id = current_story.get("project")
-        status_id = closed_status_id
-
-        if status_id is None:
-            statuses = taiga_client_wrapper.api.userstory_statuses.list(
-                query_params={"project": project_id}
-            )
-            closed_statuses = [status for status in statuses if status.get("is_closed")]
-            if not closed_statuses:
-                raise ValueError(f"No closed user story status found for project {project_id}.")
-            status_id = closed_statuses[0]["id"]
-
-        payload: Dict[str, Any] = {"status": status_id}
-        if add_archive_tag:
-            payload["tags"] = sorted(set(current_story.get("tags") or []) | {"archived-by-mcp"})
-
-        version = current_story.get("version")
-        if version is None:
-            raise ValueError(f"Could not determine version for user story {user_story_id}.")
-
-        return taiga_client_wrapper.api.user_stories.edit(
-            user_story_id=user_story_id, version=version, **payload
+        return _archive_or_close_item(
+            taiga_client_wrapper=taiga_client_wrapper,
+            item_id=user_story_id,
+            item_type="user story",
+            api_collection_name="user_stories",
+            status_collection_name="userstory_statuses",
+            id_kwarg_name="user_story_id",
+            closed_status_id=closed_status_id,
+            add_archive_tag=add_archive_tag,
         )
 
     result = _execute_taiga_operation(
@@ -1237,10 +1283,23 @@ def create_task(
     cache_key = None
     if idempotency_key:
         cache_key = _make_idempotency_cache_key(idempotency_key, project_id, subject, parsed_kwargs)
-        cached = idempotency_cache.get(cache_key)
-        if cached is not None:
-            logger.info("Returning cached task create response for idempotency key.")
-            return _filter_response(cached, "task", verbosity)
+        with idempotency_cache_lock:
+            cached = _get_idempotency_cache(cache_key)
+            if cached is not None:
+                logger.info("Returning cached task create response for idempotency key.")
+                return _filter_response(cached, "task", verbosity)
+
+            result = _execute_taiga_operation(
+                "create_task",
+                lambda: taiga_client_wrapper.api.tasks.create(
+                    project=project_id,
+                    subject=subject,
+                    data=parsed_kwargs if parsed_kwargs else None,
+                ),
+                f"task '{subject}'",
+            )
+            _set_idempotency_cache(cache_key, result)
+            return _filter_response(result, "task", verbosity)
 
     result = _execute_taiga_operation(
         "create_task",
@@ -1251,7 +1310,7 @@ def create_task(
     )
 
     if cache_key:
-        idempotency_cache[cache_key] = result
+        _set_idempotency_cache(cache_key, result)
 
     return _filter_response(result, "task", verbosity)
 
@@ -1383,28 +1442,17 @@ def archive_or_close_task(
     taiga_client_wrapper = _get_authenticated_client(actual_session_id)
 
     def do_archive():
-        current_task = taiga_client_wrapper.api.tasks.get(task_id)
-        project_id = current_task.get("project")
-        status_id = closed_status_id
-
-        if status_id is None:
-            statuses = taiga_client_wrapper.api.task_statuses.list(
-                query_params={"project": project_id}
-            )
-            closed_statuses = [status for status in statuses if status.get("is_closed")]
-            if not closed_statuses:
-                raise ValueError(f"No closed task status found for project {project_id}.")
-            status_id = closed_statuses[0]["id"]
-
-        payload: Dict[str, Any] = {"status": status_id}
-        if add_archive_tag:
-            payload["tags"] = sorted(set(current_task.get("tags") or []) | {"archived-by-mcp"})
-
-        version = current_task.get("version")
-        if version is None:
-            raise ValueError(f"Could not determine version for task {task_id}.")
-
-        return taiga_client_wrapper.api.tasks.edit(task_id=task_id, version=version, data=payload)
+        return _archive_or_close_item(
+            taiga_client_wrapper=taiga_client_wrapper,
+            item_id=task_id,
+            item_type="task",
+            api_collection_name="tasks",
+            status_collection_name="task_statuses",
+            id_kwarg_name="task_id",
+            closed_status_id=closed_status_id,
+            add_archive_tag=add_archive_tag,
+            use_data_payload=True,
+        )
 
     result = _execute_taiga_operation("archive_or_close_task", do_archive, f"task {task_id}")
     return _filter_response(result, "task", verbosity)
