@@ -1,9 +1,12 @@
 # server.py
+import hashlib
 import json
 import logging
 import logging.config
 import uuid
+from collections import OrderedDict
 from contextlib import asynccontextmanager
+from threading import RLock
 from typing import Any, AsyncIterator, Dict, List, Optional
 
 from mcp.server.fastmcp import FastMCP
@@ -418,6 +421,12 @@ def _validate_kwargs(resource_type: str, kwargs: dict, strict: bool = False) -> 
 # Store active sessions: session_id -> TaigaClientWrapper instance
 active_sessions: Dict[str, TaigaClientWrapper] = {}
 
+# In-memory deduplication for task creation. Bounded and guarded because MCP
+# servers can handle concurrent tool calls in the same process.
+MAX_IDEMPOTENCY_CACHE_SIZE = 1024
+idempotency_cache: OrderedDict[str, Dict[str, Any]] = OrderedDict()
+idempotency_cache_lock = RLock()
+
 # Reserved session ID for auto-authenticated session from environment variables
 DEFAULT_SESSION_ID = "default"
 
@@ -573,6 +582,96 @@ def _filter_response(response, resource_type: str, verbosity: str = "standard"):
     if isinstance(response, list):
         return [filter_dict(item) for item in response]
     return filter_dict(response)
+
+
+def _make_idempotency_cache_key(raw_key: str, project_id: int, subject: str, data: dict) -> str:
+    payload = json.dumps(data, sort_keys=True, default=str)
+    digest = hashlib.sha256(f"{project_id}:{subject}:{payload}".encode("utf-8")).hexdigest()
+    return f"{raw_key}:{digest}"
+
+
+def _get_idempotency_cache(cache_key: str) -> Optional[Dict[str, Any]]:
+    with idempotency_cache_lock:
+        cached = idempotency_cache.get(cache_key)
+        if cached is not None:
+            idempotency_cache.move_to_end(cache_key)
+        return cached
+
+
+def _set_idempotency_cache(cache_key: str, result: Dict[str, Any]) -> None:
+    with idempotency_cache_lock:
+        idempotency_cache[cache_key] = result
+        idempotency_cache.move_to_end(cache_key)
+        while len(idempotency_cache) > MAX_IDEMPOTENCY_CACHE_SIZE:
+            idempotency_cache.popitem(last=False)
+
+
+def _apply_append_updates(
+    parsed_kwargs: dict,
+    current_item: dict,
+    append_description: Optional[str],
+    add_tags: Optional[List[str]],
+) -> dict:
+    """Apply merge-style update fields after fetching the current item."""
+    updated_kwargs = dict(parsed_kwargs)
+
+    if append_description is not None:
+        if "description" in updated_kwargs:
+            raise ValueError("Cannot set both 'description' and 'append_description'.")
+        current_description = current_item.get("description") or ""
+        updated_kwargs["description"] = (
+            f"{current_description}\n\n{append_description}".strip()
+            if current_description
+            else append_description
+        )
+
+    if add_tags is not None:
+        if "tags" in updated_kwargs:
+            raise ValueError("Cannot set both 'tags' and 'add_tags'.")
+        existing_tags = set(current_item.get("tags") or [])
+        updated_kwargs["tags"] = sorted(existing_tags | set(add_tags))
+
+    return updated_kwargs
+
+
+def _archive_or_close_item(
+    taiga_client_wrapper: TaigaClientWrapper,
+    item_id: int,
+    item_type: str,
+    api_collection_name: str,
+    status_collection_name: str,
+    id_kwarg_name: str,
+    closed_status_id: Optional[int],
+    add_archive_tag: bool,
+    use_data_payload: bool = False,
+) -> Dict[str, Any]:
+    api_collection = getattr(taiga_client_wrapper.api, api_collection_name)
+    status_collection = getattr(taiga_client_wrapper.api, status_collection_name)
+    current_item = api_collection.get(item_id)
+    project_id = current_item.get("project")
+    status_id = closed_status_id
+
+    if status_id is None:
+        statuses = status_collection.list(query_params={"project": project_id})
+        closed_statuses = [status for status in statuses if status.get("is_closed")]
+        if not closed_statuses:
+            raise ValueError(f"No closed {item_type} status found for project {project_id}.")
+        status_id = closed_statuses[0]["id"]
+
+    payload: Dict[str, Any] = {"status": status_id}
+    if add_archive_tag:
+        payload["tags"] = sorted(set(current_item.get("tags") or []) | {"archived-by-mcp"})
+
+    version = current_item.get("version")
+    if version is None:
+        raise ValueError(f"Could not determine version for {item_type} {item_id}.")
+
+    edit_kwargs: Dict[str, Any] = {id_kwarg_name: item_id, "version": version}
+    if use_data_payload:
+        edit_kwargs["data"] = payload
+    else:
+        edit_kwargs.update(payload)
+    return api_collection.edit(**edit_kwargs)
 
 
 def _get_item_by_ref(
@@ -968,13 +1067,15 @@ def get_user_story_by_ref(
 
 @mcp.tool(
     "update_user_story",
-    description="Updates details of an existing user story. verbosity: 'minimal', 'standard' (default), 'full'. Uses default session if session_id not provided.",
+    description="Updates details of an existing user story. Supports append_description and add_tags for merge-safe updates. verbosity: 'minimal', 'standard' (default), 'full'. Uses default session if session_id not provided.",
 )
 def update_user_story(
     user_story_id: int,
     kwargs: Any = None,
     session_id: Optional[str] = None,
     verbosity: str = "standard",
+    append_description: Optional[str] = None,
+    add_tags: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """Updates a user story. Pass fields to update as kwargs JSON string (e.g., {"subject": "New", "status": 2})."""
     actual_session_id = _get_session_id(session_id)
@@ -984,13 +1085,15 @@ def update_user_story(
     )
     taiga_client_wrapper = _get_authenticated_client(actual_session_id)
     try:
+        current_story = taiga_client_wrapper.api.user_stories.get(user_story_id)
+        parsed_kwargs = _apply_append_updates(
+            parsed_kwargs, current_story, append_description, add_tags
+        )
+
         if not parsed_kwargs:
             logger.info(f"No fields provided for update on user story {user_story_id}")
-            result = taiga_client_wrapper.api.user_stories.get(user_story_id)
-            return _filter_response(result, "user_story", verbosity)
+            return _filter_response(current_story, "user_story", verbosity)
 
-        # Get current user story data to retrieve version
-        current_story = taiga_client_wrapper.api.user_stories.get(user_story_id)
         version = current_story.get("version")
         if not version:
             logger.warning(
@@ -1031,6 +1134,39 @@ def delete_user_story(user_story_id: int, session_id: Optional[str] = None) -> D
 
 
 @mcp.tool(
+    "archive_or_close_user_story",
+    description="Soft-delete a user story by moving it to a closed status and optionally adding the 'archived-by-mcp' tag. Uses default session if session_id not provided.",
+)
+def archive_or_close_user_story(
+    user_story_id: int,
+    closed_status_id: Optional[int] = None,
+    add_archive_tag: bool = True,
+    session_id: Optional[str] = None,
+    verbosity: str = "standard",
+) -> Dict[str, Any]:
+    """Soft-delete a user story without hard-deleting it from Taiga."""
+    actual_session_id = _get_session_id(session_id)
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
+
+    def do_archive():
+        return _archive_or_close_item(
+            taiga_client_wrapper=taiga_client_wrapper,
+            item_id=user_story_id,
+            item_type="user story",
+            api_collection_name="user_stories",
+            status_collection_name="userstory_statuses",
+            id_kwarg_name="user_story_id",
+            closed_status_id=closed_status_id,
+            add_archive_tag=add_archive_tag,
+        )
+
+    result = _execute_taiga_operation(
+        "archive_or_close_user_story", do_archive, f"user story {user_story_id}"
+    )
+    return _filter_response(result, "user_story", verbosity)
+
+
+@mcp.tool(
     "assign_user_story_to_user",
     description="Assigns a specific user story to a specific user. Uses default session if session_id not provided.",
 )
@@ -1043,7 +1179,9 @@ def assign_user_story_to_user(
         f"Executing assign_user_story_to_user: US {user_story_id} -> User {user_id}, session {actual_session_id[:8]}..."
     )
     # Delegate to update_user_story with assigned_to
-    return update_user_story(user_story_id, json.dumps({"assigned_to": user_id}), actual_session_id)
+    return update_user_story(
+        user_story_id, json.dumps({"assigned_to": user_id}), session_id=actual_session_id
+    )
 
 
 @mcp.tool(
@@ -1059,7 +1197,9 @@ def unassign_user_story_from_user(
         f"Executing unassign_user_story_from_user: US {user_story_id}, session {actual_session_id[:8]}..."
     )
     # Delegate to update_user_story with assigned_to=None
-    return update_user_story(user_story_id, json.dumps({"assigned_to": None}), actual_session_id)
+    return update_user_story(
+        user_story_id, json.dumps({"assigned_to": None}), session_id=actual_session_id
+    )
 
 
 @mcp.tool(
@@ -1120,7 +1260,7 @@ def list_tasks(
 
 @mcp.tool(
     "create_task",
-    description="Creates a new task within a project. verbosity: 'minimal', 'standard' (default), 'full'. Uses default session if session_id not provided.",
+    description="Creates a new task within a project. Optional idempotency_key deduplicates retried creates during the server process lifetime. verbosity: 'minimal', 'standard' (default), 'full'. Uses default session if session_id not provided.",
 )
 def create_task(
     project_id: int,
@@ -1128,6 +1268,7 @@ def create_task(
     kwargs: Any = None,
     session_id: Optional[str] = None,
     verbosity: str = "standard",
+    idempotency_key: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Creates a task. Requires project_id and subject. Optional fields (description, milestone_id, status_id, user_story_id, assigned_to_id, etc.) via kwargs JSON string."""
     actual_session_id = _get_session_id(session_id)
@@ -1139,6 +1280,27 @@ def create_task(
     if not subject:
         raise ValueError("Task subject cannot be empty.")
 
+    cache_key = None
+    if idempotency_key:
+        cache_key = _make_idempotency_cache_key(idempotency_key, project_id, subject, parsed_kwargs)
+        with idempotency_cache_lock:
+            cached = _get_idempotency_cache(cache_key)
+            if cached is not None:
+                logger.info("Returning cached task create response for idempotency key.")
+                return _filter_response(cached, "task", verbosity)
+
+            result = _execute_taiga_operation(
+                "create_task",
+                lambda: taiga_client_wrapper.api.tasks.create(
+                    project=project_id,
+                    subject=subject,
+                    data=parsed_kwargs if parsed_kwargs else None,
+                ),
+                f"task '{subject}'",
+            )
+            _set_idempotency_cache(cache_key, result)
+            return _filter_response(result, "task", verbosity)
+
     result = _execute_taiga_operation(
         "create_task",
         lambda: taiga_client_wrapper.api.tasks.create(
@@ -1146,6 +1308,10 @@ def create_task(
         ),
         f"task '{subject}'",
     )
+
+    if cache_key:
+        _set_idempotency_cache(cache_key, result)
+
     return _filter_response(result, "task", verbosity)
 
 
@@ -1197,10 +1363,15 @@ def get_task_by_ref(
 
 @mcp.tool(
     "update_task",
-    description="Updates details of an existing task. verbosity: 'minimal', 'standard' (default), 'full'. Uses default session if session_id not provided.",
+    description="Updates details of an existing task. Supports append_description and add_tags for merge-safe updates. verbosity: 'minimal', 'standard' (default), 'full'. Uses default session if session_id not provided.",
 )
 def update_task(
-    task_id: int, kwargs: Any = None, session_id: Optional[str] = None, verbosity: str = "standard"
+    task_id: int,
+    kwargs: Any = None,
+    session_id: Optional[str] = None,
+    verbosity: str = "standard",
+    append_description: Optional[str] = None,
+    add_tags: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """Updates a task. Pass fields to update as kwargs JSON string (e.g., {"subject": "New", "status": 2})."""
     actual_session_id = _get_session_id(session_id)
@@ -1210,14 +1381,16 @@ def update_task(
     )
     taiga_client_wrapper = _get_authenticated_client(actual_session_id)
     try:
+        current_task = taiga_client_wrapper.api.tasks.get(task_id)
+        parsed_kwargs = _apply_append_updates(
+            parsed_kwargs, current_task, append_description, add_tags
+        )
+
         # Use pytaigaclient edit pattern for partial updates
         if not parsed_kwargs:
             logger.info(f"No fields provided for update on task {task_id}")
-            result = taiga_client_wrapper.api.tasks.get(task_id)
-            return _filter_response(result, "task", verbosity)
+            return _filter_response(current_task, "task", verbosity)
 
-        # Get current task data to retrieve version
-        current_task = taiga_client_wrapper.api.tasks.get(task_id)
         version = current_task.get("version")
         if not version:
             raise ValueError(f"Could not determine version for task {task_id}")
@@ -1254,6 +1427,38 @@ def delete_task(task_id: int, session_id: Optional[str] = None) -> Dict[str, Any
 
 
 @mcp.tool(
+    "archive_or_close_task",
+    description="Soft-delete a task by moving it to a closed status and optionally adding the 'archived-by-mcp' tag. Uses default session if session_id not provided.",
+)
+def archive_or_close_task(
+    task_id: int,
+    closed_status_id: Optional[int] = None,
+    add_archive_tag: bool = True,
+    session_id: Optional[str] = None,
+    verbosity: str = "standard",
+) -> Dict[str, Any]:
+    """Soft-delete a task without hard-deleting it from Taiga."""
+    actual_session_id = _get_session_id(session_id)
+    taiga_client_wrapper = _get_authenticated_client(actual_session_id)
+
+    def do_archive():
+        return _archive_or_close_item(
+            taiga_client_wrapper=taiga_client_wrapper,
+            item_id=task_id,
+            item_type="task",
+            api_collection_name="tasks",
+            status_collection_name="task_statuses",
+            id_kwarg_name="task_id",
+            closed_status_id=closed_status_id,
+            add_archive_tag=add_archive_tag,
+            use_data_payload=True,
+        )
+
+    result = _execute_taiga_operation("archive_or_close_task", do_archive, f"task {task_id}")
+    return _filter_response(result, "task", verbosity)
+
+
+@mcp.tool(
     "assign_task_to_user",
     description="Assigns a specific task to a specific user. Uses default session if session_id not provided.",
 )
@@ -1266,7 +1471,7 @@ def assign_task_to_user(
         f"Executing assign_task_to_user: Task {task_id} -> User {user_id}, session {actual_session_id[:8]}..."
     )
     # Delegate to update_task with assigned_to
-    return update_task(task_id, json.dumps({"assigned_to": user_id}), actual_session_id)
+    return update_task(task_id, json.dumps({"assigned_to": user_id}), session_id=actual_session_id)
 
 
 @mcp.tool(
@@ -1280,7 +1485,7 @@ def unassign_task_from_user(task_id: int, session_id: Optional[str] = None) -> D
         f"Executing unassign_task_from_user: Task {task_id}, session {actual_session_id[:8]}..."
     )
     # Delegate to update_task with assigned_to=None
-    return update_task(task_id, json.dumps({"assigned_to": None}), actual_session_id)
+    return update_task(task_id, json.dumps({"assigned_to": None}), session_id=actual_session_id)
 
 
 @mcp.tool(
