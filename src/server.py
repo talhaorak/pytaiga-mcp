@@ -1323,7 +1323,9 @@ def update_task(
     taiga_client_wrapper = _get_authenticated_client(actual_session_id)
     try:
         current_task = taiga_client_wrapper.api.tasks.get(task_id)
-        parsed_kwargs = _apply_append_updates(parsed_kwargs, current_task, append_description, add_tags)
+        parsed_kwargs = _apply_append_updates(
+            parsed_kwargs, current_task, append_description, add_tags
+        )
 
         # Use pytaigaclient edit pattern for partial updates
         if not parsed_kwargs:
@@ -1402,9 +1404,7 @@ def archive_or_close_task(
         if version is None:
             raise ValueError(f"Could not determine version for task {task_id}.")
 
-        return taiga_client_wrapper.api.tasks.edit(
-            task_id=task_id, version=version, data=payload
-        )
+        return taiga_client_wrapper.api.tasks.edit(task_id=task_id, version=version, data=payload)
 
     result = _execute_taiga_operation("archive_or_close_task", do_archive, f"task {task_id}")
     return _filter_response(result, "task", verbosity)
