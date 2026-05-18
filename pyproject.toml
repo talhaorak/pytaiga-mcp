@@ -14,7 +14,7 @@ dependencies = [
     "python-dotenv>=0.15.0",
     "pydantic>=2.4.0",
     "pydantic-settings>=2.0.0",
-    "pytaigaclient",
+    "pytaigaclient @ git+https://github.com/talhaorak/pyTaigaClient.git",
 ]
 
 [project.optional-dependencies]
@@ -79,9 +79,6 @@ token = { env = "GH_TOKEN" }
 
 [tool.semantic_release.changelog.default_templates]
 changelog_file = "CHANGELOG.md"
-
-[tool.uv.sources]
-pytaigaclient = { git = "https://github.com/talhaorak/pyTaigaClient.git" }
 
 [dependency-groups]
 dev = [
